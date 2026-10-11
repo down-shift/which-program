@@ -1,0 +1,8 @@
+id: safe_ratio
+package: package
+module: package.rules
+editable_paths: [package/rules.py]
+allowed_patch_scope: [package/rules.py]
+description: Return a safe ratio with a caller-selected fallback for zero denominator.
+alternate_rationale: A plausible earlier helper raises on zero and truncates negative inputs through integer coercion.
+alternate_public_tests_expected: fail

@@ -1,0 +1,1 @@
+Fix `package.rules.safe_ratio(numerator, denominator, default=0.0)`. Return `default` when the denominator is zero; otherwise return the true floating point quotient, including for negative values. Do not coerce inputs to integers.

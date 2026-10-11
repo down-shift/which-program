@@ -1,0 +1,8 @@
+id: normalize_code
+package: package
+module: package.rules
+editable_paths: [package/rules.py]
+allowed_patch_scope: [package/rules.py]
+description: Normalize whitespace and case in a simple product code.
+alternate_rationale: A plausible earlier implementation collapses whitespace but preserves case and underscores.
+alternate_public_tests_expected: fail

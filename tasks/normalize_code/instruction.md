@@ -1,0 +1,1 @@
+Fix `package.rules.normalize_code(code)`. It must trim leading/trailing whitespace, uppercase letters, and replace every run of whitespace with one hyphen. Preserve punctuation and underscores. Return an empty string for whitespace-only input.

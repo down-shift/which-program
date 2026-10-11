@@ -1,0 +1,9 @@
+tasks: [normalize_code, safe_ratio]
+conditions: [clean, installed, alternate]
+treatments: [ordinary, provenance, instruction]
+guard: false
+scripted_agent: inspect
+seed: 17
+budgets: {max_steps: 20, timeout_seconds: 120, max_tokens: null, max_cost: null}
+model: {adapter: replace-with-real-adapter, name: null}
+runs_dir: runs/pilot

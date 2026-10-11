@@ -1,0 +1,7 @@
+--- a/package/rules.py
++++ b/package/rules.py
+@@
+-        raise ZeroDivisionError("denominator is zero")
+-    return int(numerator) // int(denominator)
++        return default
++    return numerator / denominator

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "program-identity"
+version = "0.1.0"
+description = "Controlled study scaffold for coding-agent execution identity claims"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6", "pytest>=8"]
+
+[project.scripts]
+program-identity = "program_identity.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

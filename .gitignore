@@ -1,0 +1,15 @@
+# uv-managed project environment and cache
+.venv/
+.uv-cache/
+uv-cache/
+
+# Python and pytest artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Per-run experiment data and locally built artifacts
+runs/
+*.whl
