@@ -4,5 +4,12 @@ module: package.rules
 editable_paths: [package/rules.py]
 allowed_patch_scope: [package/rules.py]
 description: Return a safe ratio with a caller-selected fallback for zero denominator.
-alternate_rationale: A plausible earlier helper raises on zero and truncates negative inputs through integer coercion.
-alternate_public_tests_expected: fail
+alternate_rationale: A plausible earlier helper returns ordinary ratios but ignores the requested fallback for zero denominators.
+alternate_public_tests_expected: pass
+monitored_modules: [package, package.rules]
+dependency_scope: [package/__init__.py, package/rules.py]
+environment_differences:
+  installed: Non-editable wheel of the alternate snapshot in an isolated uv virtual environment.
+  alternate: Explicit PYTHONPATH to the alternate checkout.
+  installed_failing: Non-editable wheel of the unmodified starter snapshot.
+  alternate_failing: Explicit PYTHONPATH to a second checkout of the unmodified starter.

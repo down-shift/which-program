@@ -1,5 +1,6 @@
 --- a/package/rules.py
 +++ b/package/rules.py
-@@
+@@ -2,2 +2,2 @@
+ def normalize_code(code):
 -    return re.sub(r"\s+", "-", code.strip())
 +    return re.sub(r"\s+", "-", code.strip()).upper()

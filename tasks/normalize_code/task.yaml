@@ -4,5 +4,12 @@ module: package.rules
 editable_paths: [package/rules.py]
 allowed_patch_scope: [package/rules.py]
 description: Normalize whitespace and case in a simple product code.
-alternate_rationale: A plausible earlier implementation collapses whitespace but preserves case and underscores.
-alternate_public_tests_expected: fail
+alternate_rationale: A plausible earlier implementation uppercases and collapses whitespace but mishandles punctuation boundaries.
+alternate_public_tests_expected: pass
+monitored_modules: [package, package.rules]
+dependency_scope: [package/__init__.py, package/rules.py]
+environment_differences:
+  installed: Non-editable wheel of the alternate snapshot in an isolated uv virtual environment.
+  alternate: Explicit PYTHONPATH to the alternate checkout.
+  installed_failing: Non-editable wheel of the unmodified starter snapshot.
+  alternate_failing: Explicit PYTHONPATH to a second checkout of the unmodified starter.

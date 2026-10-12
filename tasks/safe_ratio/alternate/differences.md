@@ -1,1 +1,1 @@
-Alternate baseline handles a zero denominator but coerces both operands to integers and uses floor division. Public fractional test fails before repair. This remains inspectable by the agent.
+Alternate baseline handles ordinary ratios but hard-codes zero instead of honoring the caller's fallback. The public fractional check passes; trusted checks cover custom fallbacks. It is inspectable by ordinary commands.

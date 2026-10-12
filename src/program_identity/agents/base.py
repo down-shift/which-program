@@ -9,7 +9,8 @@ class AgentResult:
     trajectory: list[dict[str, Any]]
     usage: dict[str, Any]
     termination: str
-    delivered_patch: dict[str, str] | None = None
+    # Values are replacement text; None explicitly represents a deletion.
+    delivered_patch: dict[str, str | None] | None = None
 
 class AgentAdapter(ABC):
     @abstractmethod

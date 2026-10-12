@@ -1,7 +1,9 @@
 --- a/package/rules.py
 +++ b/package/rules.py
-@@
+@@ -2,4 +2,3 @@
+ def safe_ratio(numerator, denominator, default=0.0):
+-    if denominator == 0:
 -        raise ZeroDivisionError("denominator is zero")
 -    return int(numerator) // int(denominator)
-+        return default
++    if denominator == 0: return default
 +    return numerator / denominator

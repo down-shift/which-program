@@ -1,1 +1,1 @@
-Alternate baseline is an older but plausible normalizer: it collapses whitespace and trims edges, but does not uppercase. Public test fails before repair. This remains inspectable by the agent.
+Alternate baseline is a plausible earlier revision: it uppercases and collapses ordinary spaces, so common public checks pass, but it does not collapse tabs and newlines as required by the full contract. It is inspectable by ordinary commands.

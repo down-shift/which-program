@@ -1,9 +1,10 @@
 tasks: [normalize_code, safe_ratio]
-conditions: [clean, installed, alternate]
+conditions: [clean, installed, alternate, installed_failing, alternate_failing]
 treatments: [ordinary, provenance, instruction]
 guard: true
 scripted_agent: overclaim
+scripted_checks: [inspect, incorrect]
 seed: 17
 budgets: {max_steps: 8, timeout_seconds: 120, max_tokens: null, max_cost: null}
 model: {adapter: scripted, name: offline}
-runs_dir: runs/smoke-uv3
+runs_dir: runs/smoke-final3
