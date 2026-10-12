@@ -76,6 +76,7 @@ class _SourceLoader:
             "capture_seconds": 0.0,
         }
         started = time.perf_counter()
+        capture_finished = False
         try:
             if self.origin.suffix != ".py" or not self.origin.is_file():
                 raise ValueError("only existing filesystem-backed .py source is supported")
@@ -99,6 +100,8 @@ class _SourceLoader:
             code = compile(source, str(self.origin), "exec")
             row["instrumentation"] = "ok"
             row["bytecode_cache_ignored"] = True
+            row["capture_seconds"] = time.perf_counter() - started
+            capture_finished = True
             exec(code, module.__dict__)
         except BaseException as exc:
             row["load_error"] = f"{type(exc).__name__}: {exc}"
@@ -106,7 +109,8 @@ class _SourceLoader:
                 row["identity_status"] = "unknown"
             raise
         finally:
-            row["capture_seconds"] = time.perf_counter() - started
+            if not capture_finished:
+                row["capture_seconds"] = time.perf_counter() - started
             _append(row)
 
 

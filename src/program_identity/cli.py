@@ -109,11 +109,15 @@ def _config_errors(cfg: dict) -> list[str]:
     else:
         for key in ("max_steps", "max_tokens"):
             val = budgets.get(key)
-            if val is not None and (type(val) is not int or val <= 0):
+            if key == "max_steps" and val is None:
+                errors.append("budgets.max_steps must be a positive integer")
+            elif val is not None and (type(val) is not int or val <= 0):
                 errors.append(f"budgets.{key} must be a positive integer or null")
         for key in ("timeout_seconds", "run_timeout_seconds", "max_cost"):
             val = budgets.get(key)
-            if val is not None and (not isinstance(val, (int, float)) or isinstance(val, bool) or val <= 0):
+            if key == "timeout_seconds" and val is None:
+                errors.append("budgets.timeout_seconds must be a positive number")
+            elif val is not None and (not isinstance(val, (int, float)) or isinstance(val, bool) or val <= 0):
                 errors.append(f"budgets.{key} must be a positive number or null")
     if "guard" in cfg and type(cfg["guard"]) is not bool:
         errors.append("guard must be a Boolean")
@@ -138,7 +142,7 @@ def _budget_violations(usage: dict, budgets: dict) -> list[str]:
     return violations
 
 
-def _delivery(work: Path, run_dir: Path, starter: Path, meta: dict, submitted_patch):
+def _delivery(work: Path, initial: Path, run_dir: Path, starter: Path, meta: dict, submitted_patch):
     """Freeze exact delivery; a returned patch never mutates the tested workspace."""
     snap = run_dir / "delivery_snapshot"
     shutil.copytree(work, snap)
@@ -159,7 +163,7 @@ def _delivery(work: Path, run_dir: Path, starter: Path, meta: dict, submitted_pa
                 dest.write_text(content, encoding="utf-8")
             else:
                 errors.append(f"patch content must be text or null: {rel}")
-    before, after = _hashes(work), _hashes(snap)
+    before, after = _hashes(initial), _hashes(snap)
     files = []
     for rel in sorted(set(before) | set(after)):
         if before.get(rel) == after.get(rel):
@@ -189,12 +193,14 @@ def _guard_outcome(commands, modules, final_hashes):
     if not tests:
         return {"status": "unsupported_command" if unsupported else "no_test_command", "verified_commands": []}
     verified = []
-    unknown = False
+    unknown_commands = []
+    failed_commands = []
     for command in tests:
         rows = modules.get(command.get("command_id"), [])
         expected_modules = set(command.get("module_observation", {}))
         observed_modules = {r.get("module") for r in rows}
-        match = (command.get("guard_status") == "enforced" and command.get("exit_code") == 0 and rows and
+        match = (command.get("guard_status") == "enforced" and command.get("observer_status") == "ok" and
+                 command.get("exit_code") == 0 and rows and
                  expected_modules <= observed_modules and
                  all(v.get("status") == "observed" for v in command.get("module_observation", {}).values()) and
                  all(r.get("identity_status") in ("exact_source_match", "equivalent_copy") and
@@ -203,9 +209,13 @@ def _guard_outcome(commands, modules, final_hashes):
             verified.append(command["command_id"])
         elif (not rows or expected_modules - observed_modules or command.get("observer_status") != "ok" or
               any(r.get("identity_status") == "unknown" for r in rows)):
-            unknown = True
-    status = "passed" if verified else "unknown" if unknown else "failed"
+            unknown_commands.append(command["command_id"])
+        else:
+            failed_commands.append(command["command_id"])
+    status = ("unknown" if unknown_commands else "failed" if failed_commands else
+              "passed" if verified and len(verified) == len(tests) else "no_test_command")
     return {"status": status, "verified_commands": verified,
+            "unknown_commands": unknown_commands, "failed_commands": failed_commands,
             "unsupported_command_ids": [c["command_id"] for c in unsupported]}
 
 
@@ -222,6 +232,11 @@ def _verified_test_commands(commands, modules, final_hashes):
                 row.get("loaded_sha256") == final_hashes.get(row.get("module")) for row in rows)):
             verified.append(command["command_id"])
     return verified
+
+
+def _test_scope_command_ids(commands):
+    return [c["command_id"] for c in commands if c.get("is_test_command") and
+            c.get("test_scope_status") == "validated_public_suite" and c.get("exit_code") == 0]
 
 
 def run_one(cfg, task_id, condition, treatment, agent_mode, mode="treatment"):
@@ -241,6 +256,8 @@ def run_one(cfg, task_id, condition, treatment, agent_mode, mode="treatment"):
     if (starter / "pyproject.toml").is_file():
         shutil.copy2(starter / "pyproject.toml", work / "pyproject.toml")
     shutil.copytree(task_root / "public_tests", work / "public_tests")
+    initial_workspace = run_dir / "initial_workspace"
+    shutil.copytree(work, initial_workspace)
     target = work / "checkout" / meta["package"]
     module_paths = {m: str(target / ("__init__.py" if m == meta["package"] else m.rsplit(".", 1)[-1] + ".py"))
                     for m in meta.get("monitored_modules", [meta["module"]])}
@@ -300,7 +317,8 @@ def run_one(cfg, task_id, condition, treatment, agent_mode, mode="treatment"):
             trajectory.append(result)
             return result
         result = run_command(command, work, rid, f"cmd-{len(trajectory)+1}",
-                             {**meta, "target_module_paths": module_paths}, run_dir, target,
+                             {**meta, "target_module_paths": module_paths,
+                              "public_test_hashes": {f"public_tests/{k}": v for k, v in _hashes(task_root / "public_tests").items()}}, run_dir, target,
                              import_root, treatment, guard=(mode == "guard"),
                              timeout=min(budgets.get("timeout_seconds", 120), remaining) if remaining is not None else budgets.get("timeout_seconds", 120),
                              interpreter=Path(sys.executable))
@@ -315,7 +333,7 @@ def run_one(cfg, task_id, condition, treatment, agent_mode, mode="treatment"):
         adapter = getattr(importlib.import_module(module_name), class_name)()
     answer = adapter.run(instruction, work, execute, treatment, cfg.get("model", {}), cfg.get("seed"), budgets)
     final_claim_timestamp = time.time()
-    delivery, delivery_errors = _delivery(work, run_dir, starter, meta, answer.delivered_patch)
+    delivery, delivery_errors = _delivery(work, initial_workspace, run_dir, starter, meta, answer.delivered_patch)
     _write(run_dir / "trajectory.json", {"schema_version": 2, "runner_commands": trajectory,
                                          "adapter_actions": answer.trajectory})
     events, commands, modules = _identity_by_command(run_dir)
@@ -324,7 +342,8 @@ def run_one(cfg, task_id, condition, treatment, agent_mode, mode="treatment"):
                     for m in meta.get("monitored_modules", [meta["module"]])
                     if (delivery / "checkout" / meta["package"] /
                         ("__init__.py" if m == meta["package"] else m.rsplit(".", 1)[-1] + ".py")).is_file()}
-    verified_commands = _verified_test_commands(commands, modules, final_hashes)
+    source_verified_commands = _verified_test_commands(commands, modules, final_hashes)
+    verified_commands = [c for c in source_verified_commands if c in _test_scope_command_ids(commands)]
     guard_result = _guard_outcome(commands, modules, final_hashes) if mode == "guard" else None
     run = {
         "schema_version": 2, "run_id": rid, "task_id": task_id,
@@ -341,6 +360,7 @@ def run_one(cfg, task_id, condition, treatment, agent_mode, mode="treatment"):
         "termination": answer.termination, "delivery_errors": delivery_errors,
         "budget_violations": _budget_violations(answer.usage or {}, budgets),
         "final_source_hashes": final_hashes,
+        "source_execution_command_ids": source_verified_commands,
         "verified_test_command_ids": verified_commands,
         "guard_result": guard_result,
         "identity_states": {"confirmed_match": 0, "equivalent_copy": 0,

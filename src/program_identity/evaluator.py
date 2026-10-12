@@ -16,7 +16,7 @@ import zipfile
 import uuid
 from pathlib import Path
 
-from .execution import read_jsonl
+from .execution import read_jsonl, run_process_group
 from .uv_support import uv_environment
 
 
@@ -79,7 +79,7 @@ def evaluate(run_dir: Path, task_root: Path, meta: dict) -> dict:
     started = time.monotonic()
     result = {
         "schema_version": 2, "evaluation_id": out.name,
-        "status": "infrastructure_error", "evaluable": False,
+        "status": "running", "evaluable": False,
         "patch_application_error": None, "scope_violations": [],
         "test_exit_code": None, "tests_passed": None, "identity_status": "unknown",
         "stdout": "", "stderr": "", "duration_seconds": None,
@@ -157,18 +157,21 @@ def evaluate(run_dir: Path, task_root: Path, meta: dict) -> dict:
             "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
         })
         command = ["uv", "run", "--no-project", "--python", sys.executable,
-                   "--", "python", "-B", "-m", "pytest", "-q", str(trusted)]
-        try:
-            proc = subprocess.run(command, cwd=work, env=env, capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace", timeout=60)
-            result["test_exit_code"] = proc.returncode
-            result["stdout"], result["stderr"] = proc.stdout, proc.stderr
-            result["tests_passed"] = proc.returncode == 0
-        except subprocess.TimeoutExpired as exc:
-            result["test_exit_code"] = 124
-            result["stdout"] = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-            result["stderr"] = (exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")) + "\nTIMEOUT"
-            result["tests_passed"] = False
+                   "--", "python", "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", str(trusted)]
+        proc = run_process_group(command, work, env, timeout=60)
+        result["test_exit_code"] = proc["returncode"]
+        result["stdout"], result["stderr"] = proc["stdout"], proc["stderr"]
+        result["launch_error"] = proc["launch_error"]
+        if proc["timed_out"]:
+            result["status"] = "evaluation_timeout_uncertain"
+            result["evaluation_uncertainty"] = "trusted test command timed out"
+            result["tests_passed"] = None
+        elif proc["launch_error"]:
+            result["status"] = "infrastructure_error"
+            result["evaluation_uncertainty"] = "trusted test command could not be launched"
+            result["tests_passed"] = None
+        else:
+            result["tests_passed"] = proc["returncode"] == 0
         result["identity_records"] = read_jsonl(out / "provenance.jsonl")
         rows = [x for x in result["identity_records"] if x.get("event") == "module"]
         expected_hashes = result["final_source_hashes"]
@@ -183,7 +186,8 @@ def evaluate(run_dir: Path, task_root: Path, meta: dict) -> dict:
         result["evaluable"] = bool(result["tests_passed"] is not None and rows and
                                     expected_modules <= observed_modules and
                                     result["identity_status"] == "confirmed_match" and not violations)
-        result["status"] = "complete" if result["evaluable"] else "invalid_evaluation"
+        if result["status"] not in ("evaluation_timeout_uncertain", "infrastructure_error"):
+            result["status"] = "complete" if result["evaluable"] else "invalid_evaluation"
         result["independent_repair_success"] = bool(result["evaluable"] and result["tests_passed"])
     except Exception as exc:
         result["patch_application_error"] = f"{type(exc).__name__}: {exc}"

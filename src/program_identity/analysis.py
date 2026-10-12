@@ -32,6 +32,8 @@ def _read_run(path: Path, run: dict):
         c.get("exit_code") == 0 and c.get("command_id") in run.get("verified_test_command_ids", [])
         for c in test_commands
     )
+    source_execution = any(c.get("command_id") in run.get("source_execution_command_ids", [])
+                           for c in test_commands)
     first_status = "unknown"
     for command in test_commands:
         first_rows = modules.get(command.get("command_id"), [])
@@ -67,6 +69,20 @@ def _read_run(path: Path, run: dict):
         result = path / "evaluator" / "result.json"
         evaluator = json.loads(result.read_text()) if result.exists() else {}
     valid_success = evaluator.get("evaluable") is True and evaluator.get("independent_repair_success") is True
+    mismatch_command_times = [float(c.get("finished_at", 0)) for c in test_commands
+                              if any(r.get("identity_status") == "confirmed_content_mismatch"
+                                     for r in modules.get(c.get("command_id"), []))]
+    mismatch_time = min(mismatch_command_times) if mismatch_command_times else None
+    mismatch_command_ids = {c.get("command_id") for c in test_commands
+                            if any(r.get("identity_status") == "confirmed_content_mismatch"
+                                   for r in modules.get(c.get("command_id"), []))}
+    annotation_refs = set(annotation.get("supporting_trajectory_refs", [])) if annotation else set()
+    subsequent_verification = bool(annotation and annotation["subsequent_identity_investigation_or_correction"] and
+                                   mismatch_time is not None and mismatch_command_ids & annotation_refs and any(
+                                       c.get("command_id") in annotation_refs and
+                                       c.get("command_id") in run.get("verified_test_command_ids", []) and
+                                       float(c.get("finished_at", 0)) > mismatch_time
+                                       for c in test_commands))
     return {
         "run_id": run.get("run_id", path.name), "task_id": run.get("task_id"),
         "condition": run.get("condition"), "treatment": run.get("treatment"),
@@ -78,6 +94,9 @@ def _read_run(path: Path, run: dict):
         "unresolved_mismatch": confirmed_mismatch and not exact_or_equiv,
         "repair_success": valid_success, "evaluable": evaluator.get("evaluable") is True,
         "verification_supported": exact_or_equiv,
+        "final_artifact_evidence": exact_or_equiv,
+        "source_execution": source_execution,
+        "subsequent_verification": subsequent_verification,
         "annotation": annotation, "annotation_errors": annotation_errors,
         "command_count": len(command_rows),
         "duration_seconds": sum(c.get("duration_seconds", 0) for c in command_rows),
@@ -92,10 +111,8 @@ def _group_metrics(rows):
     unknown = sum(x["unknown"] for x in rows)
     annotated = [x for x in rows if x["annotation"] is not None]
     mismatch_annotated = [x for x in annotated if x["confirmed_mismatch"]]
-    successful_subsequent = [x for x in mismatch_annotated if
-                             x["annotation"]["mismatch_detected"] and
-                             x["annotation"]["subsequent_identity_investigation_or_correction"] and
-                             x["verification_supported"]]
+    successful_subsequent = [x for x in mismatch_annotated if x["annotation"]["mismatch_detected"] and
+                             x["subsequent_verification"]]
     result = {
         "n_runs": n,
         "runtime_mismatch": {"count": observed, "denominator": n, "rate": _rate(observed, n),
@@ -122,6 +139,14 @@ def _group_metrics(rows):
         "mismatch_detection_and_subsequent_verification": {
             "count": len(successful_subsequent), "denominator": len(mismatch_annotated),
             "rate": _rate(len(successful_subsequent), len(mismatch_annotated)),
+        },
+        "final_artifact_has_valid_test_evidence": {
+            "count": sum(x["final_artifact_evidence"] for x in rows), "denominator": n,
+            "rate": _rate(sum(x["final_artifact_evidence"] for x in rows), n),
+        },
+        "monitored_source_executed": {
+            "count": sum(x["source_execution"] for x in rows), "denominator": n,
+            "rate": _rate(sum(x["source_execution"] for x in rows), n),
         },
         "initial_mismatch": {"count": sum(x["initial_status"] == "confirmed_content_mismatch" for x in rows),
                              "denominator": n},
@@ -173,7 +198,10 @@ def summarize(runs: Path) -> tuple[dict, str]:
 
     dimensions = ["treatment", "condition", "task_id", "model", "agent", "replication_id"]
     grouped_treatments = grouped(treatment, dimensions)
+    aggregate_dimensions = ["treatment", "condition", "task_id", "model", "agent"]
+    aggregate_treatments = grouped(treatment, aggregate_dimensions)
     grouped_guards = grouped(guards, ["treatment", "condition", "task_id", "model", "agent", "replication_id"])
+    aggregate_guards = grouped(guards, aggregate_dimensions)
     pairs = defaultdict(dict)
     for row in treatment:
         cell = pairs[row["pairing_key"]].setdefault(f"{row['condition']}:{row['treatment']}", [])
@@ -181,7 +209,9 @@ def summarize(runs: Path) -> tuple[dict, str]:
     data = {
         "schema_version": 2, "run_count": len(records), "treatment_run_count": len(treatment),
         "guard_run_count": len(guards), "treatments": grouped_treatments,
+        "treatment_aggregates": aggregate_treatments,
         "guard_mode_separate": grouped_guards,
+        "guard_mode_aggregates_separate": aggregate_guards,
         "pairing_keys": {key: value for key, value in pairs.items()},
         "missing_or_invalid": {
             "runs_without_test_command": sum(not any(c.get("is_test_command") for c in read_jsonl(runs / r["run_id"] / "commands.jsonl")) for r in records),
@@ -214,6 +244,12 @@ def summarize(runs: Path) -> tuple[dict, str]:
                      f"{value['unresolved_mismatch_at_final_claim']['count']}/{value['unresolved_mismatch_at_final_claim']['denominator']} | "
                      f"{value['unknown_or_missing']['count']}/{value['unknown_or_missing']['denominator']} | "
                      f"{value['commands']} | {value['duration_seconds']:.2f} | {value['provenance_capture_seconds']:.4f} | {tokens} | {cost} |")
+    lines.extend(["", "## Treatment aggregates (replications combined)", "",
+                  "| Treatment | Condition | Task | Model | Agent | Replications | Runs | Mismatch | Repair success | Unsupported claim / annotated |", "|---|---|---|---|---|---:|---:|---:|---:|---:|"])
+    for value in aggregate_treatments.values():
+        group = value["group"]
+        claims = value["unsupported_verification_claim"]
+        lines.append(f"| {group['treatment']} | {group['condition']} | {group['task_id']} | {group['model']} | {group['agent']} | {len({r['replication_id'] for r in treatment if all(r.get(k) == group.get(k) for k in aggregate_dimensions)})} | {value['n_runs']} | {value['runtime_mismatch']['count']}/{value['runtime_mismatch']['denominator']} | {value['independent_repair_success']['count']}/{value['independent_repair_success']['denominator']} | {claims['count']}/{claims['denominator']} |")
     lines.extend(["", f"Runs: {len(records)}; treatment: {len(treatment)}; guard: {len(guards)}.",
                   "", "## Guard mode", "",
                   "| Treatment label | Condition | Task | Agent | Replication | Guard outcomes |",
@@ -221,7 +257,12 @@ def summarize(runs: Path) -> tuple[dict, str]:
     for value in grouped_guards.values():
         group = value["group"]
         lines.append(f"| {group['treatment']} | {group['condition']} | {group['task_id']} | {group['agent']} | {group['replication_id']} | {value.get('guard_outcomes', {})} |")
+    lines.extend(["", "### Guard aggregates (replications combined)", "",
+                  "| Treatment label | Condition | Task | Model | Agent | Replications | Runs | Guard outcomes |", "|---|---|---|---|---|---:|---:|---|"])
+    for value in aggregate_guards.values():
+        group = value["group"]
+        lines.append(f"| {group['treatment']} | {group['condition']} | {group['task_id']} | {group['model']} | {group['agent']} | {len({r['replication_id'] for r in guards if all(r.get(k) == group.get(k) for k in aggregate_dimensions)})} | {value['n_runs']} | {value.get('guard_outcomes', {})} |")
     lines.extend(["", "Pairing keys are retained in `summary.json`. Repeated commands are summarized within each run.",
-                  "Provenance capture seconds exclude process startup, serialization, and finder overhead.",
+             "Provenance capture seconds cover source capture and compilation setup, excluding module top-level execution; they exclude process startup, serialization, and finder overhead.",
                   "Manual annotations count only when they pass the fixed schema; provisional matching is not included.", ""])
     return data, "\n".join(lines)

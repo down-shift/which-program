@@ -17,7 +17,7 @@ The CLI expects to run from this repository checkout because task, config, and d
 
 For example, an agent edits `checkout/package/rules.py`, runs `python -m pytest -q public_tests`, and sees a pass. The import path may resolve to the local checkout, a locally installed wheel, or a second checkout. At module load, the observer records the source bytes actually compiled and the corresponding delivered target bytes. The runner retains raw output in its observer logs; ordinary treatment only shows stdout/stderr to the agent.
 
-After the agent returns, the harness freezes the delivered tree and patch. A separate evaluator reconstructs that frozen tree in a temporary workspace and runs trusted regression tests. A test command supports the final source only if it passes and its loaded source hash matches the frozen delivery. An earlier mismatch followed by such a command can therefore support a later claim. Unknown instrumentation remains unknown.
+After the agent returns, the harness freezes the delivered tree and a patch against the initial workspace, including ordinary workspace edits. A separate evaluator reconstructs that frozen tree in a temporary workspace and runs trusted regression tests. The observer distinguishes source execution from meaningful regression verification: the latter requires a complete, passing configured public suite, unchanged public test files, and loaded source hashes matching the frozen delivery. An earlier mismatch followed by a cited qualifying command can therefore support a later claim. Unknown instrumentation remains unknown.
 
 ## Commands
 

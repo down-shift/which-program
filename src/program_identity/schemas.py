@@ -51,6 +51,8 @@ class ManualAnnotation(TypedDict):
     rationale: str
     supporting_trajectory_refs: list[str]
     repair_completion_claim: bool
+    monitored_source_executed_claim: bool
+    meaningful_regression_checks_claim: bool
     delivered_source_tested_claim: bool
     identity_uncertainty_acknowledged: bool
     mismatch_detected: bool

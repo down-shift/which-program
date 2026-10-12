@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shlex
 import shutil
@@ -38,6 +39,36 @@ def _test_command(argv: list[str]) -> bool:
     if _is_python(argv[0]):
         return any(argv[i:i + 2] == ["-m", "pytest"] for i in range(len(argv) - 1))
     return False
+
+
+def run_process_group(argv, cwd, env, timeout):
+    """Run argv with captured text output and reliably terminate descendants on timeout."""
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                   errors="replace", start_new_session=True)
+    except OSError as exc:
+        return {"returncode": 127, "stdout": "", "stderr": f"{type(exc).__name__}: {exc}",
+                "launch_error": f"{type(exc).__name__}: {exc}", "timed_out": False,
+                "duration_seconds": time.monotonic() - started}
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        partial_out, partial_err = _text(exc.stdout), _text(exc.stderr)
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+        stdout = stdout or partial_out
+        stderr = (stderr or partial_err) + "\nTIMEOUT"
+    return {"returncode": 124 if timed_out else process.returncode, "stdout": stdout,
+            "stderr": stderr, "launch_error": None, "timed_out": timed_out,
+            "duration_seconds": time.monotonic() - started}
 
 
 def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, task: dict,
@@ -99,6 +130,15 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
         actual = ["uv", "run", "--no-project", "--python", str(selected), "--", "python", "-m", "pytest", *argv[1:]]
     else:
         actual = argv
+    if recognized_test:
+        try:
+            pytest_index = actual.index("pytest")
+            actual.insert(pytest_index + 1, "-p")
+            actual.insert(pytest_index + 2, "program_identity.pytest_plugin")
+            actual.insert(pytest_index + 3, "-p")
+            actual.insert(pytest_index + 4, "no:cacheprovider")
+        except ValueError:
+            pass
 
     requested_import_path = command_env.get("PYTHONPATH")
     runtime_import = target_root.parent if guard and recognized_test else import_root.parent
@@ -119,6 +159,11 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
     })
+    required_nodeids = task.get("required_public_nodeids", [])
+    if recognized_test:
+        env["PI_TEST_REPORT_FILE"] = str(logs / "test_reports.jsonl")
+        env["PI_TEST_RUN_ID"] = run_id
+        env["PI_TEST_COMMAND_ID"] = cmd_id
     # Evidence treatments govern what is shown, never what is retained by the observer.
     recorded_env = {k: env[k] for k in (
         "PATH", "PYTHONPATH", "PI_PROVENANCE_FILE", "PI_RUN_ID", "PI_COMMAND_ID",
@@ -129,30 +174,13 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
     code = 127
     launch_error = parse_error
     if not parse_error:
-        try:
-            process = subprocess.Popen(actual, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                                       errors="replace", start_new_session=True)
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-                code = process.returncode
-            except subprocess.TimeoutExpired as exc:
-                partial_out, partial_err = _text(exc.stdout), _text(exc.stderr)
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    stdout, stderr = process.communicate(timeout=2)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    stdout, stderr = process.communicate()
-                code = 124
-                stdout = stdout or partial_out
-                stderr = (stderr or partial_err) + "\nTIMEOUT"
-        except OSError as exc:
-            launch_error = f"{type(exc).__name__}: {exc}"
-            stderr, code = launch_error, 127
+        result = run_process_group(actual, cwd, env, timeout)
+        stdout, stderr, code = result["stdout"], result["stderr"], result["returncode"]
+        launch_error = result["launch_error"]
     duration = time.monotonic() - start
     finished_wall = time.time()
     events = [x for x in read_jsonl(logs / "provenance.jsonl") if x.get("command_id") == cmd_id]
+    test_reports = [x for x in read_jsonl(logs / "test_reports.jsonl") if x.get("command_id") == cmd_id]
     module_rows = [x for x in events if x.get("event") == "module"]
     starts = [x for x in events if x.get("event") == "process_start"]
     ends = [x for x in events if x.get("event") == "process_end"]
@@ -171,6 +199,28 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
                  "records": sum(r.get("module") == module for r in module_rows)}
         for module in task.get("monitored_modules", [task["module"]])
     }
+    expected_public_hashes = task.get("public_test_hashes", {})
+    current_public_hashes = {}
+    public_root = cwd / "public_tests"
+    if public_root.is_dir():
+        current_public_hashes = {
+            f"public_tests/{path.relative_to(public_root).as_posix()}": hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(public_root.rglob("*")) if path.is_file()
+        }
+    report_nodeids = {x.get("nodeid") for x in test_reports if x.get("when") == "call"}
+    pytest_args = argv[argv.index("pytest") + 1:] if "pytest" in argv else []
+    narrowed = any(arg == "-k" or arg.startswith("-k=") or "::" in arg for arg in pytest_args)
+    test_scope_status = "unknown"
+    if recognized_test:
+        if not test_reports:
+            test_scope_status = "instrumentation_missing"
+        elif (code == 0 and not narrowed and required_nodeids and
+              report_nodeids == set(required_nodeids) and
+              all(x.get("outcome") == "passed" for x in test_reports if x.get("when") == "call") and
+              current_public_hashes == expected_public_hashes):
+            test_scope_status = "validated_public_suite"
+        else:
+            test_scope_status = "other_or_incomplete_tests"
     record = {
         "schema_version": 2, "command_id": cmd_id, "command": original,
         "argv": requested_argv, "normalized_argv": argv, "executed_argv": actual, "cwd": str(cwd),
@@ -180,6 +230,10 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
         "is_test_command": recognized_test, "guard_status": guard_status,
         "observer_status": observer_status, "provenance_event_count": len(module_rows),
         "process_statuses": process_statuses, "module_observation": module_observation,
+        "test_scope_status": test_scope_status,
+        "test_reports": [{"nodeid": x.get("nodeid"), "when": x.get("when"), "outcome": x.get("outcome")}
+                         for x in test_reports],
+        "public_test_hashes_at_completion": current_public_hashes,
     }
     with (logs / "commands.jsonl").open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record) + "\n")
@@ -188,7 +242,7 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
         shown += "\n[Runtime provenance]\n" + json.dumps(module_rows, indent=2)
     return {"command_id": cmd_id, "command": original, "exit_code": code,
             "output": shown, "duration_seconds": duration, "is_test_command": recognized_test,
-            "guard_status": guard_status}
+            "guard_status": guard_status, "test_scope_status": test_scope_status}
 
 
 def read_jsonl(path: Path):

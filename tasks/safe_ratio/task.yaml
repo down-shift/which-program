@@ -8,6 +8,9 @@ alternate_rationale: A plausible earlier helper returns ordinary ratios but igno
 alternate_public_tests_expected: pass
 monitored_modules: [package, package.rules]
 dependency_scope: [package/__init__.py, package/rules.py]
+required_public_nodeids:
+  - public_tests/test_public.py::test_fractional_ratio
+  - public_tests/test_public.py::test_negative_ratio_and_zero_fallback
 environment_differences:
   installed: Non-editable wheel of the alternate snapshot in an isolated uv virtual environment.
   alternate: Explicit PYTHONPATH to the alternate checkout.
