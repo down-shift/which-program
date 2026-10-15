@@ -1,5 +1,6 @@
 # uv-managed project environment and cache
 .venv/
+.venv-model/
 .uv-cache/
 uv-cache/
 

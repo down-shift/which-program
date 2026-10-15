@@ -66,6 +66,21 @@ def run_process_group(argv, cwd, env, timeout):
             stdout, stderr = process.communicate()
         stdout = stdout or partial_out
         stderr = (stderr or partial_err) + "\nTIMEOUT"
+    except BaseException:
+        # An interrupted local experiment must also stop its in-flight command.
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+        raise
     return {"returncode": 124 if timed_out else process.returncode, "stdout": stdout,
             "stderr": stderr, "launch_error": None, "timed_out": timed_out,
             "duration_seconds": time.monotonic() - started}

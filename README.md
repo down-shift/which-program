@@ -41,3 +41,20 @@ Add a task directory with a precise instruction, `starter/`, passing-but-differe
 Implement `AgentAdapter.run` in `src/program_identity/agents/base.py`. It receives instruction, workspace, command execution callable, evidence treatment, model config, seed, and budgets. It returns a final response, trajectory, delivered source changes (or edits the workspace), usage where available, and termination metadata. Keep token and cost values null when unavailable. Use the annotation JSON schema described in [the rubric](docs/claim_rubric.md); keyword cues are provisional only.
 
 Read [the experiment protocol](docs/protocol.md) and [limitations](docs/limitations.md) before configuring a real-agent pilot.
+
+## Run a local GPU model
+
+On Ubuntu with an NVIDIA GPU, the launcher installs a separate pinned vLLM server,
+loads Qwen3-4B in BF16 by default, runs one clean repair, saves the full trajectory
+and independent evaluation, and shuts down its server:
+
+```sh
+uv sync --python 3.11
+uv run program-identity-local --dry-run
+uv run program-identity-local
+```
+
+After reviewing the clean run, `uv run program-identity-local --stage matrix` runs
+the nine cells in `configs/local-qwen.yaml`. Use `--guard` for a separate guard batch.
+Model selection, 8B quantized checkpoints, dependencies, artifacts, and limitations
+are documented in [the Ubuntu GPU instructions](docs/local_gpu.md).

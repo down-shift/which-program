@@ -11,6 +11,7 @@ dependencies = ["PyYAML>=6", "pytest>=8"]
 
 [project.scripts]
 program-identity = "program_identity.cli:main"
+program-identity-local = "program_identity.local:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
