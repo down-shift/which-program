@@ -181,6 +181,40 @@ def test_pytest_records_scope_and_rejects_unrelated_assertion(tmp_path):
     assert {r["nodeid"] for r in record["test_reports"] if r["when"] == "call"} == set(meta["required_public_nodeids"])
 
 
+def test_public_suite_identity_is_independent_of_pytest_rootdir(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "pyproject.toml").write_text('[tool.pytest.ini_options]\naddopts = "-q"\n')
+    meta, task, target, cwd, logs, info = _fixture(repository / "runs/batch")
+    (target / "rules.py").write_text("import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n")
+    full = _command(cwd, logs, target, "python -m pytest -q public_tests", info, "repository-root")
+    assert full["test_scope_status"] == "validated_public_suite"
+    record = read_jsonl(logs / "commands.jsonl")[-1]
+    calls = [x for x in record["test_reports"] if x["when"] == "call"]
+    assert all(x["nodeid"].startswith("runs/batch/workspace/") for x in calls)
+    assert {x["workspace_nodeid"] for x in calls} == set(meta["required_public_nodeids"])
+    second = _command(cwd, logs, target, ["python", "-m", "pytest", "--rootdir", str(cwd / "public_tests"), "-q", "public_tests"], info, "test-root")
+    assert second["test_scope_status"] == "validated_public_suite"
+
+
+def test_same_named_external_tests_do_not_count_as_workspace_suite(tmp_path):
+    meta, task, target, cwd, logs, info = _fixture(tmp_path)
+    other = tmp_path / "external/public_tests"
+    other.mkdir(parents=True)
+    shutil.copy2(task / "public_tests/test_public.py", other / "test_public.py")
+    (target / "rules.py").write_text("import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n")
+    result = _command(cwd, logs, target, ["python", "-m", "pytest", "--rootdir", str(other.parent), "-q", str(other)], info)
+    assert result["exit_code"] == 0 and result["test_scope_status"] == "other_or_incomplete_tests"
+    reports = read_jsonl(logs / "commands.jsonl")[-1]["test_reports"]
+    assert all(x["mapping_status"] == "outside_workspace" for x in reports)
+
+
+def test_complete_but_failing_public_suite_is_reported_separately(tmp_path):
+    meta, task, target, cwd, logs, info = _fixture(tmp_path)
+    result = _command(cwd, logs, target, "python -m pytest -q public_tests", info)
+    assert result["exit_code"] == 1 and result["test_scope_status"] == "complete_public_suite_failed"
+
+
 def test_delivery_patch_is_diff_from_initial_workspace_including_deletions(tmp_path):
     initial, final = tmp_path / "initial", tmp_path / "work"
     for root in (initial, final):

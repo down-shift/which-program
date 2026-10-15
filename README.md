@@ -54,7 +54,9 @@ uv run program-identity-local --dry-run
 uv run program-identity-local
 ```
 
-After reviewing the clean run, `uv run program-identity-local --stage matrix` runs
-the nine cells in `configs/local-qwen.yaml`. Use `--guard` for a separate guard batch.
+The clean stage must report `check_passed`: a real edit, passing public tests,
+valid final-source identity, and a successful independent evaluation. Then run
+`uv run program-identity-local --stage matrix --check runs/local-qwen/<new-check-batch>`
+for the nine cells in `configs/local-qwen.yaml`. Add `--guard` for a separate guard batch.
 Model selection, 8B quantized checkpoints, dependencies, artifacts, and limitations
 are documented in [the Ubuntu GPU instructions](docs/local_gpu.md).

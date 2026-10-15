@@ -8,8 +8,10 @@ It never adopts or shuts down another process already listening on the port.
 
 The default is **Qwen/Qwen3-4B in BF16**, one sequence, 8,192 tokens of total context,
 and 85% GPU memory utilization. This is the full 16-bit 4B option discussed for the
-RTX 5080 with 16 GB. Successful loading and the available context capacity still
-need verification on that GPU. These are starting settings for integration checks.
+RTX 5080 with 16 GB. The supplied October 15 logs confirm this model loaded on that
+GPU. They also show the original agent returned code suggestions without changing
+files. The corrected `local-json-v2` agent must pass a new clean integration check
+before a matrix can start; its real-model repair behavior remains to be tested.
 
 ## Commands
 
@@ -22,15 +24,15 @@ uv sync --python 3.11
 # Preview: no installation, model download, GPU use, or experiment writes.
 uv run program-identity-local --dry-run
 
-# Start the model and run ONE clean-condition repair first.
+# Start the model and check each configured task in clean/ordinary conditions.
 uv run program-identity-local
 
-# After reviewing that run, launch nine runs: one task × three environments
-# × three evidence treatments. This is a fresh batch and fresh server.
-uv run program-identity-local --stage matrix
+# Only a batch reporting check_passed can authorize the following matrix.
+# Replace <new-check-batch> with its printed batch directory.
+uv run program-identity-local --stage matrix --check runs/local-qwen/<new-check-batch>
 
 # Separate guard batch using the same model, agent, sampling, and budgets.
-uv run program-identity-local --stage matrix --guard
+uv run program-identity-local --stage matrix --guard --check runs/local-qwen/<new-check-batch>
 ```
 
 The first real launch automatically creates `.venv-model` with Python 3.12 using
@@ -38,8 +40,9 @@ The first real launch automatically creates `.venv-model` with Python 3.12 using
 `uv pip install`. Later launches reuse this environment and the Hugging Face
 download cache. Server dependencies are isolated from the harness/test runtime.
 Initial package installation and model downloads require network access and disk
-space. Subsequent Hub-based launches still resolve the selected revision online;
-a local checkpoint directory avoids Hub resolution.
+space. Floating Hub revisions are resolved online. Matrix launches reuse the
+immutable revision from the successful check. Explicit commit hashes and local
+checkpoint directories avoid Hub revision lookup.
 
 vLLM's [GPU installation documentation](https://docs.vllm.ai/en/stable/getting_started/installation/gpu/index.html?device=cuda)
 describes driver and CUDA compatibility. The script records `nvidia-smi` output
@@ -74,9 +77,14 @@ Record a deliberate config change as a new batch.
 
 ## Agent and budget behavior
 
-The adapter uses a small JSON action protocol over local HTTP. The model selects
-either `run` with an argv array or `final` with its final statement. Source reads,
-edits, imports, and pytest commands all pass through the recorded execution runner.
+The versioned `local-json-v2` adapter uses a small JSON action protocol over local
+HTTP. The model can select `read_file`, `write_file`, `run` with an argv array, or
+`final` with its final statement. File actions are translated to Python argv
+commands and pass through the same recorded runner as imports and pytest commands.
+The common prompt explicitly requests filesystem edits and explains that a code
+listing in the final response is not applied to the workspace. Final responses
+remain verbatim; the adapter never extracts and applies a suggested Markdown patch.
+The same prompt and actions apply across all evidence treatments.
 There is no hidden scripted repair or task-specific solution in the adapter.
 Commands use direct argv; shell pipelines and shell operators are unsupported.
 This restriction is the same in every environment and evidence treatment.
@@ -85,6 +93,10 @@ Thinking is disabled with `chat_template_kwargs.enable_thinking=false`, as suppo
 by the [Qwen model card](https://huggingface.co/Qwen/Qwen3-4B). Sampling, seed, protocol,
 budgets, and model identity are held fixed within a batch. Thinking mode, different
 quantizations, and different adapters would each define a different agent setup.
+Temperature, top-p, top-k, min-p, and repetition penalty are explicit in requests.
+`--generation-config vllm` disables inherited model generation defaults. Protocol,
+prompt hash, checkpoint, task, budget, and runtime fingerprints identify the new
+agent setup in reports so it is not pooled with the original integration runs.
 
 The default permits 16 model actions, 768 output tokens per response, 24,000 total
 input-plus-output tokens across model requests, and 900 seconds per repair run.
@@ -99,8 +111,20 @@ Runs ending without a valid final response retain an empty final response and an
 explicit termination reason. Infrastructure/API errors and budget exhaustion stop
 the batch after saving the partial run. An invalid independent evaluation also
 stops the batch. An ordinary incorrect repair with a valid evaluation remains a
-recorded failure and does not stop later runs. Always inspect the first clean run
-before proceeding; the launcher does not judge readiness from model claims.
+recorded failure and does not stop later matrix runs.
+
+The **check stage** reports `check_passed` only when every configured task has an
+actual source modification, a complete passing public suite, valid final-source
+identity, a successful independent evaluation, and a returned final response. It
+writes all checks to `readiness.json`, prints their outcomes, and exits nonzero
+with `check_failed` for an unchanged or incorrect repair. `completed` is reserved
+for collection of matrix outcomes and does not mean every repair succeeded.
+
+The matrix requires `--check` pointing to a successful current-version check and
+compares model identity, tasks, prompt/protocol, sampling, budgets, server packages,
+and harness sources before starting the model. Changed settings require a new
+check. This is a setup integration gate; once a matrix starts, unsuccessful repairs
+are retained and never selectively excluded or retried to obtain successful data.
 
 ## Saved artifacts and interpretation
 
@@ -110,9 +134,16 @@ path. It includes:
 - `requested-config.yaml`, effective `config.yaml`, and `launch.json` with GPU
   information, model commit or local file hashes, startup status, and server argv;
 - `server.log` and `server-packages.txt`;
+- `readiness.json` for a completed check stage, with individual acceptance checks;
 - `runs/<run-id>/` with normal task snapshots, command logs, provenance, delivery,
   evaluator results, and full adapter request/response trajectories;
-- `runs/summary.json` and `runs/summary.md`, including partial batches.
+- `runs/summary.json` and `runs/summary.md`, including partial batches. Launch
+  metadata distinguishes planned run count from completed run count.
+
+A guard batch with no supported test invocation reports `guard_execution_status:
+not_exercised`. This is distinct from a guarded invocation with an unknown or
+incorrect execution identity; no guard effectiveness outcome can be inferred from
+an agent that never invoked the guard.
 
 Hub revision names are resolved to a commit before serving; the same commit is
 passed for the model and tokenizer. Local checkpoint directories are hashed before
@@ -120,8 +151,14 @@ launch and must remain unchanged while the server loads them. Package versions
 are recorded per batch; the vLLM version is pinned, while its dependency resolution
 is not a complete portable lock. Pin the resolved environment before research runs.
 
-This script has offline mocked-server coverage. Actual vLLM/CUDA loading and real
-Qwen tool-use behavior require the Ubuntu GPU integration check. One successful
+Pytest records both raw nodeids and identities relative to the agent workspace,
+using the collected test file's actual path. Parent-repository pytest configuration
+therefore does not change suite identity; same-named tests outside the workspace
+cannot establish that the public suite ran. Complete failing public suites have a
+separate `complete_public_suite_failed` status. Original raw runs are not rewritten.
+
+This script has offline mocked-server coverage. Real Qwen tool-use behavior with
+the new protocol requires the Ubuntu GPU integration check. One successful
 clean repair is an integration check, not evidence about treatment effectiveness.
 Manual claim coding remains required. The nine-run matrix does not determine a
 sample size or produce confirmatory results.

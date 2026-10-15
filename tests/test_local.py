@@ -132,7 +132,10 @@ def mock_server_environment(tmp_path, monkeypatch):
     path = tmp_path / "local.yaml"
     path.write_text(yaml.safe_dump(cfg))
     monkeypatch.setattr(local.sys, "platform", "linux")
-    monkeypatch.setattr(local, "resolve_checkpoint", lambda model: {"kind": "mock", "sha": "a" * 40})
+    def resolve(model):
+        model["revision"] = "a" * 40
+        return {"kind": "mock", "sha": "a" * 40}
+    monkeypatch.setattr(local, "resolve_checkpoint", resolve)
     original_run, original_output, original_popen = subprocess.run, subprocess.check_output, subprocess.Popen
     def run(argv, *args, **kwargs):
         if argv[0] == "nvidia-smi":
@@ -178,18 +181,21 @@ def test_launcher_end_to_end_with_mock_model_and_real_evaluator(tmp_path, monkey
     path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
     source = "import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n"
     fake_chat(monkeypatch, [
-        {"action": "run", "argv": ["python", "-c", f"from pathlib import Path; Path('checkout/package/rules.py').write_text({source!r})"]},
+        {"action": "read_file", "path": "checkout/package/rules.py"},
+        {"action": "write_file", "path": "checkout/package/rules.py", "content": source},
         {"action": "run", "argv": ["python", "-m", "pytest", "-q", "public_tests"]},
         {"action": "final", "text": "Updated the function and ran the public tests."},
     ])
     assert local.main(["--config", str(path)]) == 0
     batch = next(Path(cfg["runs_dir"]).iterdir())
-    assert json.loads((batch / "launch.json").read_text())["status"] == "completed"
+    assert json.loads((batch / "launch.json").read_text())["status"] == "check_passed"
+    assert json.loads((batch / "readiness.json").read_text())["passed"] is True
     summary = json.loads((batch / "runs/summary.json").read_text())
     assert summary["run_count"] == 1
     run_dir = next(p for p in (batch / "runs").iterdir() if p.is_dir())
     run = json.loads((run_dir / "run.json").read_text())
     assert run["verified_test_command_ids"]
+    assert run["agent"].startswith("local-chat/local-json-v2/")
     assert json.loads((run_dir / "selected_evaluation.json").read_text())["independent_repair_success"]
     assert stopped and stopped[0] is not None
 
@@ -264,3 +270,147 @@ def test_readiness_requires_expected_alias_and_checks_server_exit(monkeypatch):
     process.exited = True
     with pytest.raises(RuntimeError, match="exited with code 1"):
         local.wait_ready(process, "http://127.0.0.1:8000/v1", "expected", 1)
+
+
+def test_file_actions_use_recorded_runner_and_reject_path_escape(tmp_path, monkeypatch):
+    source = "text with quotes: '\" and a newline\n"
+    result, requests, executed = agent_run(tmp_path, monkeypatch, [
+        {"action": "read_file", "path": "checkout/package/rules.py"},
+        {"action": "write_file", "path": "checkout/package/rules.py", "content": source},
+        {"action": "final", "text": "Finished the attempted edits."},
+    ])
+    assert result.termination == "completed" and len(executed) == 2
+    assert executed[1][-2:] == ["checkout/package/rules.py", source]
+    assert all(a[0] == "python" for a in executed)
+    with pytest.raises(ValueError, match="leaves the workspace"):
+        local_chat.action_argv({"action": "read_file", "path": "../task_snapshot/task.yaml"}, tmp_path)
+    with pytest.raises(ValueError, match="write_file requires"):
+        local_chat.action_argv({"action": "write_file", "path": "public_tests/test_public.py", "content": "pass"}, tmp_path)
+
+
+def test_no_edit_final_response_fails_clean_readiness_without_changing_claim(tmp_path, monkeypatch):
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    text = "Here is the fixed implementation: ```python\ndef normalize_code(x): return x.upper()\n```"
+    fake_chat(monkeypatch, [{"action": "final", "text": text}])
+    assert local.main(["--config", str(path)]) == 1
+    batch = next(Path(cfg["runs_dir"]).iterdir())
+    assert json.loads((batch / "launch.json").read_text())["status"] == "check_failed"
+    readiness = json.loads((batch / "readiness.json").read_text())
+    checks = readiness["runs"][0]["checks"]
+    assert not readiness["passed"] and not checks["source_changed"] and not checks["public_checks_passed"]
+    run_path = next(p for p in (batch / "runs").iterdir() if p.is_dir())
+    assert json.loads((run_path / "run.json").read_text())["final_response"] == text
+    assert json.loads((run_path / "delivered_patch.json").read_text())["files"] == []
+    with pytest.raises(SystemExit) as exc:
+        local.main(["--config", str(path), "--stage", "matrix", "--check", str(batch)])
+    assert exc.value.code == 2
+    assert len(list(Path(cfg["runs_dir"]).iterdir())) == 1
+
+
+def test_matrix_requires_check_before_starting_any_server(tmp_path):
+    cfg = config()
+    cfg["runs_dir"] = str(tmp_path / "runs")
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(SystemExit) as exc:
+        local.main(["--config", str(path), "--stage", "matrix"])
+    assert exc.value.code == 2 and not Path(cfg["runs_dir"]).exists()
+
+
+def successful_check(path, cfg, monkeypatch):
+    source = "import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n"
+    fake_chat(monkeypatch, [
+        {"action": "write_file", "path": "checkout/package/rules.py", "content": source},
+        {"action": "run", "argv": ["python", "-m", "pytest", "-q", "public_tests"]},
+        {"action": "final", "text": "Changed the source and ran public tests."},
+    ])
+    assert local.main(["--config", str(path)]) == 0
+    return next(Path(cfg["runs_dir"]).iterdir())
+
+
+def test_checked_matrix_keeps_unsuccessful_repairs_and_uses_same_model(tmp_path, monkeypatch):
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    check = successful_check(path, cfg, monkeypatch)
+    fake_chat(monkeypatch, [{"action": "final", "text": "I did not finish the repair."}] * 9)
+    assert local.main(["--config", str(path), "--stage", "matrix", "--check", str(check)]) == 0
+    matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
+    launch = json.loads((matrix / "launch.json").read_text())
+    assert launch["status"] == "completed" and launch["completed_run_count"] == 9
+    assert all(not x["checks"]["independent_repair_success"] for x in launch["outcomes"])
+    assert launch["setup_fingerprint"] == json.loads((check / "launch.json").read_text())["setup_fingerprint"]
+
+
+def test_changed_setup_requires_a_new_clean_check(tmp_path, monkeypatch):
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    check = successful_check(path, cfg, monkeypatch)
+    cfg["model"]["top_k"] = 30
+    path.write_text(yaml.safe_dump(cfg))
+    assert local.main(["--config", str(path), "--stage", "matrix", "--check", str(check)]) == 1
+    matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
+    launch = json.loads((matrix / "launch.json").read_text())
+    assert launch["completed_run_count"] == 0 and "checked setup differs" in launch["error"]
+    assert stopped[-1] is None
+
+
+def test_explicit_generation_settings_are_persisted(tmp_path, monkeypatch):
+    result, requests, executed = agent_run(tmp_path, monkeypatch, [{"action": "final", "text": "Unable to finish."}])
+    payload = next(p for u, p in requests if u.endswith("/chat/completions"))
+    assert (payload["top_k"], payload["min_p"], payload["repetition_penalty"]) == (20, 0.0, 1.0)
+    assert result.trajectory[0]["protocol_version"] == "local-json-v2"
+    command = local.server_command(config(), Path("/server/python"), "alias")
+    index = command.index("--generation-config")
+    assert command[index + 1] == "vllm"
+
+
+def test_a_passing_public_suite_with_wrong_repair_fails_clean_check(tmp_path, monkeypatch):
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    source = (ROOT / "tasks/normalize_code/alternate/package/rules.py").read_text()
+    fake_chat(monkeypatch, [
+        {"action": "write_file", "path": "checkout/package/rules.py", "content": source},
+        {"action": "run", "argv": ["python", "-m", "pytest", "-q", "public_tests"]},
+        {"action": "final", "text": "Public tests passed."},
+    ])
+    assert local.main(["--config", str(path)]) == 1
+    batch = next(Path(cfg["runs_dir"]).iterdir())
+    readiness = json.loads((batch / "readiness.json").read_text())
+    checks = readiness["runs"][0]["checks"]
+    assert checks["source_changed"] and checks["public_checks_passed"] and checks["final_source_verified"]
+    assert checks["evaluator_valid"] and not checks["independent_repair_success"]
+    assert not readiness["passed"]
+
+
+def test_old_protocol_configuration_cannot_be_replayed_as_new_agent():
+    cfg = config()
+    cfg["model"]["protocol_version"] = "local-json-v1"
+    assert any("protocol_version" in x for x in local.validate_local(cfg))
+
+
+def test_checked_guard_matrix_executes_tests_in_both_mismatch_families(tmp_path, monkeypatch):
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    check = successful_check(path, cfg, monkeypatch)
+    source = "import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n"
+    fake_chat(monkeypatch, [
+        {"action": "write_file", "path": "checkout/package/rules.py", "content": source},
+        {"action": "run", "argv": ["python", "-m", "pytest", "-q", "public_tests"]},
+        {"action": "final", "text": "Updated the source and ran public tests."},
+    ] * 9)
+    assert local.main(["--config", str(path), "--stage", "matrix", "--guard", "--check", str(check)]) == 0
+    matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
+    launch = json.loads((matrix / "launch.json").read_text())
+    assert launch["mode"] == "guard" and launch["completed_run_count"] == 9
+    run_dirs = [p for p in (matrix / "runs").iterdir() if (p / "run.json").exists()]
+    runs = [json.loads((p / "run.json").read_text()) for p in run_dirs]
+    assert {r["condition"] for r in runs} == {"clean", "installed", "alternate"}
+    assert all(r["guard_result"]["status"] == "passed" and r["verified_test_command_ids"] for r in runs)
+    assert not json.loads((matrix / "runs/summary.json").read_text())["treatments"]
+
+
+def test_guard_without_a_test_is_not_misreported_as_identity_failure(tmp_path, monkeypatch):
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    check = successful_check(path, cfg, monkeypatch)
+    fake_chat(monkeypatch, [{"action": "final", "text": "Here is an implementation suggestion."}])
+    assert local.main(["--config", str(path), "--stage", "matrix", "--guard", "--check", str(check)]) == 1
+    matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
+    launch = json.loads((matrix / "launch.json").read_text())
+    assert launch["guard_execution_status"] == "not_exercised"
+    assert launch["planned_run_count"] == 9 and launch["completed_run_count"] == 1

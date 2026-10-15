@@ -179,6 +179,7 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
         env["PI_TEST_REPORT_FILE"] = str(logs / "test_reports.jsonl")
         env["PI_TEST_RUN_ID"] = run_id
         env["PI_TEST_COMMAND_ID"] = cmd_id
+        env["PI_TEST_WORKSPACE"] = str(cwd.resolve())
     # Evidence treatments govern what is shown, never what is retained by the observer.
     recorded_env = {k: env[k] for k in (
         "PATH", "PYTHONPATH", "PI_PROVENANCE_FILE", "PI_RUN_ID", "PI_COMMAND_ID",
@@ -222,18 +223,21 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
             f"public_tests/{path.relative_to(public_root).as_posix()}": hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted(public_root.rglob("*")) if path.is_file()
         }
-    report_nodeids = {x.get("nodeid") for x in test_reports if x.get("when") == "call"}
+    call_reports = [x for x in test_reports if x.get("when") == "call"]
+    report_nodeids = {x.get("workspace_nodeid") for x in call_reports}
     pytest_args = argv[argv.index("pytest") + 1:] if "pytest" in argv else []
     narrowed = any(arg == "-k" or arg.startswith("-k=") or "::" in arg for arg in pytest_args)
     test_scope_status = "unknown"
     if recognized_test:
         if not test_reports:
             test_scope_status = "instrumentation_missing"
-        elif (code == 0 and not narrowed and required_nodeids and
+        elif (not narrowed and required_nodeids and call_reports and
               report_nodeids == set(required_nodeids) and
-              all(x.get("outcome") == "passed" for x in test_reports if x.get("when") == "call") and
+              all(x.get("mapping_status") == "mapped" for x in call_reports) and
               current_public_hashes == expected_public_hashes):
-            test_scope_status = "validated_public_suite"
+            test_scope_status = ("validated_public_suite" if code == 0 and
+                                 all(x.get("outcome") == "passed" for x in test_reports)
+                                 else "complete_public_suite_failed")
         else:
             test_scope_status = "other_or_incomplete_tests"
     record = {
@@ -246,7 +250,8 @@ def run_command(command: str | list[str], cwd: Path, run_id: str, cmd_id: str, t
         "observer_status": observer_status, "provenance_event_count": len(module_rows),
         "process_statuses": process_statuses, "module_observation": module_observation,
         "test_scope_status": test_scope_status,
-        "test_reports": [{"nodeid": x.get("nodeid"), "when": x.get("when"), "outcome": x.get("outcome")}
+        "test_reports": [{key: x.get(key) for key in ("nodeid", "workspace_nodeid", "source_path",
+                         "pytest_root", "mapping_status", "when", "outcome")}
                          for x in test_reports],
         "public_test_hashes_at_completion": current_public_hashes,
     }

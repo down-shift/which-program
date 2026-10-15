@@ -12,6 +12,7 @@ budgets:
   max_cost: null
 model:
   adapter: program_identity.agents.local_chat:LocalChatAgent
+  protocol_version: local-json-v2
   name: Qwen/Qwen3-4B
   checkpoint: Qwen/Qwen3-4B
   revision: main
@@ -21,6 +22,9 @@ model:
   enable_thinking: false
   temperature: 0.2
   top_p: 0.8
+  top_k: 20
+  min_p: 0.0
+  repetition_penalty: 1.0
   max_output_tokens: 768
   request_timeout_seconds: 120
 server:
