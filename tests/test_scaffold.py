@@ -158,6 +158,7 @@ def test_guard_enforces_test_command_in_installed_mismatch_and_rejects_unsupport
 def test_guard_requires_complete_observer_heartbeats():
     command = {"command_id": "c", "is_test_command": True, "guard_status": "enforced",
                "observer_status": "partial_or_missing", "exit_code": 0,
+               "test_scope_status": "validated_public_suite",
                "module_observation": {"package.rules": {"status": "observed"}}}
     module = {"module": "package.rules", "identity_status": "exact_source_match", "loaded_sha256": "same"}
     result = _guard_outcome([command], {"c": [module]}, {"package.rules": "same"})
@@ -165,6 +166,37 @@ def test_guard_requires_complete_observer_heartbeats():
     complete = {**command, "command_id": "good", "observer_status": "ok"}
     mixed = _guard_outcome([complete, command], {"good": [module], "c": [module]}, {"package.rules": "same"})
     assert mixed["status"] == "unknown" and mixed["verified_commands"] == ["good"]
+
+
+def test_guard_allows_failed_tests_before_verified_repair():
+    command = {"command_id": "before", "is_test_command": True, "guard_status": "enforced",
+               "observer_status": "ok", "exit_code": 1,
+               "test_scope_status": "complete_public_suite_failed",
+               "module_observation": {"package.rules": {"status": "observed"}}}
+    before = {"module": "package.rules", "identity_status": "exact_source_match", "loaded_sha256": "old"}
+    after = {**before, "loaded_sha256": "final"}
+    repaired = {**command, "command_id": "after", "exit_code": 0,
+                "test_scope_status": "validated_public_suite"}
+    result = _guard_outcome([command, repaired], {"before": [before], "after": [after]},
+                            {"package.rules": "final"})
+    assert result["status"] == "passed"
+    assert result["verified_commands"] == ["after"]
+    assert result["unverified_commands"] == ["before"]
+    assert result["failed_commands"] == []
+    assert _guard_outcome([command], {"before": [before]}, {"package.rules": "final"})["status"] == "unverified"
+    mismatch = {**before, "identity_status": "confirmed_content_mismatch"}
+    assert _guard_outcome([command, repaired], {"before": [mismatch], "after": [after]},
+                          {"package.rules": "final"})["status"] == "failed"
+
+
+def test_guard_requires_complete_public_suite():
+    command = {"command_id": "partial", "is_test_command": True, "guard_status": "enforced",
+               "observer_status": "ok", "exit_code": 0, "test_scope_status": "other_or_incomplete_tests",
+               "module_observation": {"package.rules": {"status": "observed"}}}
+    module = {"module": "package.rules", "identity_status": "exact_source_match", "loaded_sha256": "final"}
+    result = _guard_outcome([command], {"partial": [module]}, {"package.rules": "final"})
+    assert result["status"] == "unverified"
+    assert result["verified_commands"] == []
 
 
 def test_pytest_records_scope_and_rejects_unrelated_assertion(tmp_path):

@@ -441,6 +441,12 @@ def test_matrix_retains_budget_exhaustion_and_continues(tmp_path, monkeypatch):
     assert "context_or_token_budget_exhausted" in (matrix / "runs/summary.md").read_text()
 
 
+def test_unverified_guard_is_an_observed_outcome():
+    assert local.run_infrastructure_error(
+        {"termination": "completed", "guard_result": {"status": "unverified"}},
+        {"evaluable": True}, guard=True) is None
+
+
 def test_incomplete_clean_check_writes_failed_readiness(tmp_path, monkeypatch):
     from program_identity.agents.base import AgentResult
     path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)

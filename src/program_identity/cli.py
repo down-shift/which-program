@@ -195,12 +195,13 @@ def _guard_outcome(commands, modules, final_hashes):
     verified = []
     unknown_commands = []
     failed_commands = []
+    unverified_commands = []
     for command in tests:
         rows = modules.get(command.get("command_id"), [])
         expected_modules = set(command.get("module_observation", {}))
         observed_modules = {r.get("module") for r in rows}
         match = (command.get("guard_status") == "enforced" and command.get("observer_status") == "ok" and
-                 command.get("exit_code") == 0 and rows and
+                 command.get("exit_code") == 0 and command.get("test_scope_status") == "validated_public_suite" and rows and
                  expected_modules <= observed_modules and
                  all(v.get("status") == "observed" for v in command.get("module_observation", {}).values()) and
                  all(r.get("identity_status") in ("exact_source_match", "equivalent_copy") and
@@ -210,12 +211,18 @@ def _guard_outcome(commands, modules, final_hashes):
         elif (not rows or expected_modules - observed_modules or command.get("observer_status") != "ok" or
               any(r.get("identity_status") == "unknown" for r in rows)):
             unknown_commands.append(command["command_id"])
-        else:
+        elif (command.get("guard_status") != "enforced" or
+              any(r.get("identity_status") not in ("exact_source_match", "equivalent_copy") for r in rows)):
             failed_commands.append(command["command_id"])
+        else:
+            # Assertion failures and tests of earlier source versions are normal
+            # repair history, not failures to enforce source identity.
+            unverified_commands.append(command["command_id"])
     status = ("unknown" if unknown_commands else "failed" if failed_commands else
-              "passed" if verified and len(verified) == len(tests) else "no_test_command")
+              "passed" if verified else "unverified")
     return {"status": status, "verified_commands": verified,
             "unknown_commands": unknown_commands, "failed_commands": failed_commands,
+            "unverified_commands": unverified_commands,
             "unsupported_command_ids": [c["command_id"] for c in unsupported]}
 
 

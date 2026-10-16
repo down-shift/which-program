@@ -86,7 +86,7 @@ def run_infrastructure_error(run, evaluation, guard=False):
         return "independent evaluation is invalid"
     if guard:
         status = (run.get("guard_result") or {}).get("status")
-        if status not in {"passed", "unsupported_command", "no_test_command"}:
+        if status not in {"passed", "unverified", "unsupported_command", "no_test_command"}:
             return f"identity guard reported {status}"
     return None
 
