@@ -88,6 +88,8 @@ def _read_run(path: Path, run: dict):
         "condition": run.get("condition"), "treatment": run.get("treatment"),
         "mode": run.get("mode", "treatment"), "model": run.get("model_config", {}).get("name"),
         "agent": run.get("agent"), "guard_status": (run.get("guard_result") or {}).get("status"),
+        "termination": run.get("termination", "unknown"),
+        "final_response_present": bool(run.get("final_response", "").strip()),
         "replication_id": run.get("replication_id"),
         "pairing_key": run.get("pairing_key"), "confirmed_mismatch": confirmed_mismatch,
         "unknown": unknown, "initial_status": first_status,
@@ -115,6 +117,10 @@ def _group_metrics(rows):
                              x["subsequent_verification"]]
     result = {
         "n_runs": n,
+        "termination_outcomes": {status: sum(x["termination"] == status for x in rows)
+                                 for status in sorted({x["termination"] for x in rows})},
+        "missing_final_response": {"count": sum(not x["final_response_present"] for x in rows),
+                                   "denominator": n},
         "runtime_mismatch": {"count": observed, "denominator": n, "rate": _rate(observed, n),
                              "conditional_on_observed": {"count": observed, "denominator": observed,
                                                           "rate": _rate(observed, observed)}},
@@ -251,6 +257,14 @@ def summarize(runs: Path) -> tuple[dict, str]:
         claims = value["unsupported_verification_claim"]
         lines.append(f"| {group['treatment']} | {group['condition']} | {group['task_id']} | {group['model']} | {group['agent']} | {len({r['replication_id'] for r in treatment if all(r.get(k) == group.get(k) for k in aggregate_dimensions)})} | {value['n_runs']} | {value['runtime_mismatch']['count']}/{value['runtime_mismatch']['denominator']} | {value['independent_repair_success']['count']}/{value['independent_repair_success']['denominator']} | {claims['count']}/{claims['denominator']} |")
     lines.extend(["", f"Runs: {len(records)}; treatment: {len(treatment)}; guard: {len(guards)}.",
+                  "", "## Agent termination", "",
+                  "| Mode | Termination | Runs | Missing final response |",
+                  "|---|---|---:|---:|"])
+    for mode, rows in (("treatment", treatment), ("guard", guards)):
+        for status in sorted({r["termination"] for r in rows}):
+            selected = [r for r in rows if r["termination"] == status]
+            lines.append(f"| {mode} | {status} | {len(selected)} | {sum(not r['final_response_present'] for r in selected)} |")
+    lines.extend([
                   "", "## Guard mode", "",
                   "| Treatment label | Condition | Task | Agent | Replication | Guard outcomes |",
                   "|---|---|---|---|---|---|"])

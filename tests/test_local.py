@@ -67,6 +67,9 @@ def test_adapter_enforces_token_cap_before_generation(tmp_path, monkeypatch):
     assert result.termination == "context_or_token_budget_exhausted"
     assert not executed
     assert not any(url.endswith("/chat/completions") for url, _ in requests)
+    assert result.trajectory[-1]["prompt_token_count"] == 20
+    assert result.trajectory[-1]["consumed_tokens"] == 0
+    assert result.trajectory[-1]["budget_limits"]["max_tokens"] == 10
 
 
 def test_adapter_usage_is_nullable_and_errors_do_not_become_claims(tmp_path, monkeypatch):
@@ -408,9 +411,55 @@ def test_checked_guard_matrix_executes_tests_in_both_mismatch_families(tmp_path,
 def test_guard_without_a_test_is_not_misreported_as_identity_failure(tmp_path, monkeypatch):
     path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
     check = successful_check(path, cfg, monkeypatch)
-    fake_chat(monkeypatch, [{"action": "final", "text": "Here is an implementation suggestion."}])
-    assert local.main(["--config", str(path), "--stage", "matrix", "--guard", "--check", str(check)]) == 1
+    fake_chat(monkeypatch, [{"action": "final", "text": "Here is an implementation suggestion."}] * 9)
+    assert local.main(["--config", str(path), "--stage", "matrix", "--guard", "--check", str(check)]) == 0
     matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
     launch = json.loads((matrix / "launch.json").read_text())
-    assert launch["guard_execution_status"] == "not_exercised"
-    assert launch["planned_run_count"] == 9 and launch["completed_run_count"] == 1
+    assert all(x["guard_status"] == "no_test_command" for x in launch["outcomes"])
+    assert launch["planned_run_count"] == 9 and launch["completed_run_count"] == 9
+
+
+def test_matrix_retains_budget_exhaustion_and_continues(tmp_path, monkeypatch):
+    from program_identity.agents.base import AgentResult
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    check = successful_check(path, cfg, monkeypatch)
+    terms = ["context_or_token_budget_exhausted", "action_budget_exhausted", "run_deadline_exhausted"] * 3
+    outcomes = iter(terms)
+    def incomplete(self, *args):
+        return AgentResult("", [], {"input_tokens": 20940, "output_tokens": 0, "cost": None}, next(outcomes))
+    monkeypatch.setattr(local_chat.LocalChatAgent, "run", incomplete)
+    assert local.main(["--config", str(path), "--stage", "matrix", "--check", str(check)]) == 0
+    matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
+    launch = json.loads((matrix / "launch.json").read_text())
+    assert launch["status"] == "completed" and launch["completed_run_count"] == 9
+    assert [r["termination"] for r in launch["outcomes"]] == terms
+    assert all(not r["final_response_present"] and r["checks"]["evaluator_valid"] for r in launch["outcomes"])
+    summary = json.loads((matrix / "runs/summary.json").read_text())
+    assert summary["run_count"] == 9
+    assert sum(g["missing_final_response"]["count"] for g in summary["treatments"].values()) == 9
+    assert all(g["unsupported_verification_claim"]["denominator"] == 0 for g in summary["treatments"].values())
+    assert "context_or_token_budget_exhausted" in (matrix / "runs/summary.md").read_text()
+
+
+def test_incomplete_clean_check_writes_failed_readiness(tmp_path, monkeypatch):
+    from program_identity.agents.base import AgentResult
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    monkeypatch.setattr(local_chat.LocalChatAgent, "run", lambda *args: AgentResult(
+        "", [], {"input_tokens": 0, "output_tokens": 0, "cost": None}, "action_budget_exhausted"))
+    assert local.main(["--config", str(path)]) == 1
+    batch = next(Path(cfg["runs_dir"]).iterdir())
+    assert json.loads((batch / "launch.json").read_text())["status"] == "check_failed"
+    assert json.loads((batch / "readiness.json").read_text())["passed"] is False
+
+
+@pytest.mark.parametrize("termination,evaluable,guard_status", [
+    ("inference_error", True, "passed"),
+    ("usage_unknown", True, "passed"),
+    ("action_budget_exhausted", False, "no_test_command"),
+    ("completed", True, "failed"),
+    ("completed", True, "unknown"),
+])
+def test_infrastructure_failures_remain_fatal(termination, evaluable, guard_status):
+    assert local.run_infrastructure_error(
+        {"termination": termination, "guard_result": {"status": guard_status}},
+        {"evaluable": evaluable}, guard=True)

@@ -69,8 +69,26 @@ def integration_readiness(run_path):
         "evaluator_valid": evaluation.get("evaluable") is True,
         "independent_repair_success": evaluation.get("independent_repair_success") is True,
     }
-    return {"run_id": run["run_id"], "checks": checks, "passed": all(checks.values()),
+    return {"run_id": run["run_id"], "termination": run.get("termination"),
+            "final_response_present": bool(run.get("final_response", "").strip()),
+            "checks": checks, "passed": all(checks.values()),
             "guard_status": (run.get("guard_result") or {}).get("status")}
+
+
+def run_infrastructure_error(run, evaluation, guard=False):
+    """Budget exhaustion is an observed agent outcome, not a collection failure."""
+    if run.get("termination") not in {
+        "completed", "action_budget_exhausted", "context_or_token_budget_exhausted",
+        "run_deadline_exhausted",
+    }:
+        return f"agent stopped with {run.get('termination')}"
+    if not evaluation.get("evaluable"):
+        return "independent evaluation is invalid"
+    if guard:
+        status = (run.get("guard_result") or {}).get("status")
+        if status not in {"passed", "unsupported_command", "no_test_command"}:
+            return f"identity guard reported {status}"
+    return None
 
 
 def load_check(path, cfg):
@@ -353,18 +371,13 @@ def main(argv=None):
                 launch["completed_run_count"] += 1
                 print(f"  source_changed={outcome['checks']['source_changed']} public_checks_passed={outcome['checks']['public_checks_passed']} "
                       f"repair_success={outcome['checks']['independent_repair_success']}", flush=True)
-                if run["termination"] != "completed":
-                    raise RuntimeError(f"agent stopped with {run['termination']}; inspect {run_path}/trajectory.json before expanding the pilot")
-                if args.guard and (run.get("guard_result") or {}).get("status") != "passed":
-                    guard_status = (run.get("guard_result") or {}).get("status")
-                    if guard_status in ("unsupported_command", "no_test_command"):
-                        launch["guard_execution_status"] = "not_exercised"
-                        raise RuntimeError(f"guard was not exercised: the agent issued no supported test command; inspect {run_path}/run.json")
-                    launch["guard_execution_status"] = guard_status or "unknown"
-                    raise RuntimeError(f"identity guard reported {guard_status}; inspect {run_path}/run.json")
                 evaluation = json.loads((run_path / "selected_evaluation.json").read_text())
-                if not evaluation.get("evaluable"):
-                    raise RuntimeError(f"independent evaluation is invalid; inspect {run_path}/selected_evaluation.json")
+                error = run_infrastructure_error(run, evaluation, guard=args.guard)
+                _save(batch / "launch.json", launch)
+                if error:
+                    raise RuntimeError(f"{error}; inspect {run_path}")
+                if run["termination"] != "completed":
+                    print(f"  retained incomplete outcome: {run['termination']}; continuing", flush=True)
             launch["status"] = "completed"
             if args.stage == "check":
                 readiness = {"schema_version": 1, "setup_fingerprint": launch["setup_fingerprint"],

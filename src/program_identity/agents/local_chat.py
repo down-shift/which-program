@@ -109,6 +109,8 @@ class LocalChatAgent(AgentAdapter):
                 count = counted["count"]
                 if type(count) is not int or count < 0:
                     raise ValueError("invalid token count")
+                event["prompt_token_count"] = count
+                event["consumed_tokens"] = totals["input_tokens"] + totals["output_tokens"] if available else None
                 output_limit = min(model_config.get("max_output_tokens", 768),
                                    model_config.get("context_length", 8192) - count)
                 cap = budgets.get("max_tokens")
@@ -119,6 +121,9 @@ class LocalChatAgent(AgentAdapter):
                     output_limit = min(output_limit, cap - totals["input_tokens"] - totals["output_tokens"] - count)
                 if output_limit <= 0:
                     termination = "context_or_token_budget_exhausted"
+                    event["termination"] = termination
+                    event["budget_limits"] = {"context_length": model_config.get("context_length", 8192),
+                                              "max_tokens": cap, "available_output_tokens": output_limit}
                     break
                 remaining = budgets.get("run_timeout_seconds", 900) - (time.monotonic() - started)
                 if remaining <= 0:

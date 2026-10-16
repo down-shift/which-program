@@ -108,10 +108,16 @@ response is logged and may be followed by an explicit correction request within
 the same action/token budgets. Missing usage remains null; cost remains null.
 
 Runs ending without a valid final response retain an empty final response and an
-explicit termination reason. Infrastructure/API errors and budget exhaustion stop
+explicit termination reason. Infrastructure/API errors stop
 the batch after saving the partial run. An invalid independent evaluation also
 stops the batch. An ordinary incorrect repair with a valid evaluation remains a
-recorded failure and does not stop later matrix runs.
+recorded failure and does not stop later matrix runs. Action, context/token, and
+run deadline exhaustion are retained as incomplete outcomes and collection continues,
+without automatic retries or fabricated final claims. Their delivered source is
+still independently evaluated. Guard runs with no supported test invocation are
+retained as `no_test_command` or `unsupported_command`, not guard successes.
+Actual guard identity failures still stop collection. A clean integration check
+with an incomplete response remains `check_failed`; it cannot authorize a matrix.
 
 The **check stage** reports `check_passed` only when every configured task has an
 actual source modification, a complete passing public suite, valid final-source
@@ -140,8 +146,9 @@ path. It includes:
 - `runs/summary.json` and `runs/summary.md`, including partial batches. Launch
   metadata distinguishes planned run count from completed run count.
 
-A guard batch with no supported test invocation reports `guard_execution_status:
-not_exercised`. This is distinct from a guarded invocation with an unknown or
+A guard run with no supported test invocation records `guard_status: no_test_command`
+in its launch outcome (or `unsupported_command` for unsupported invocations).
+Collection continues and summaries preserve these counts. This is distinct from a guarded invocation with an unknown or
 incorrect execution identity; no guard effectiveness outcome can be inferred from
 an agent that never invoked the guard.
 
