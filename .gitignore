@@ -14,3 +14,5 @@ htmlcov/
 # Per-run experiment data and locally built artifacts
 runs/
 *.whl
+
+.DS_Store
