@@ -15,7 +15,7 @@ The CLI expects to run from this repository checkout because task, config, and d
 
 ## How a run works
 
-For example, an agent edits `checkout/package/rules.py`, runs `python -m pytest -q public_tests`, and sees a pass. The import path may resolve to the local checkout, a locally installed wheel, or a second checkout. At module load, the observer records the source bytes actually compiled and the corresponding delivered target bytes. The runner retains raw output in its observer logs; ordinary treatment only shows stdout/stderr to the agent.
+For example, an agent edits `checkout/package/rules.py`, runs `python -m pytest -q public_tests`, and sees a pass. The import path may resolve to the local checkout, a locally installed wheel, or a second checkout. At module load, the observer records the captured source bytes and corresponding target bytes at that time. Verification later compares this evidence with the frozen final delivery; compilation failure does not establish execution. The runner retains raw output in its observer logs; ordinary treatment only shows stdout/stderr to the agent.
 
 After the agent returns, the harness freezes the delivered tree and a patch against the initial workspace, including ordinary workspace edits. A separate evaluator reconstructs that frozen tree in a temporary workspace and runs trusted regression tests. The observer distinguishes source execution from meaningful regression verification: the latter requires a complete, passing configured public suite, unchanged public test files, and loaded source hashes matching the frozen delivery. An earlier mismatch followed by a cited qualifying command can therefore support a later claim. Unknown instrumentation remains unknown.
 
@@ -45,6 +45,14 @@ Read [the experiment protocol](docs/protocol.md) and [limitations](docs/limitati
 The [reviewed pilot results and expanded task plan](reports/pilot-20261016/README.md)
 include a reproducible artifact audit, assistant claim-review candidates for human
 review, and commands for the next four-task local-model pilot.
+
+The [completed expanded treatment analysis](reports/expanded-pilot-seed18/README.md)
+documents 36 additional observations, including six invalid-code deliveries
+masked by passing tests against another copy. Its guard comparator is incomplete.
+See [research positioning](docs/research_positioning.md) for prior work and claim
+boundaries, and the [planner handoff](reports/planner-handoff-20261018.md) for
+current artifacts, dependencies, and prioritized next work. Assistant annotation
+candidates remain separate from human-coded results.
 
 ## Run a local GPU model
 

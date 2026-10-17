@@ -1,0 +1,9 @@
+Seed 18: check new clean check required
+Seed 18 treatment: retained /Users/daniel/Documents/nss_lab/which_program/runs/local-qwen-expanded/20261017T162544Z-4b4fe12a
+Seed 18 guard: resume /Users/daniel/Documents/nss_lab/which_program/runs/local-qwen-expanded/20261017T162735Z-cda64d03
+Seed 19: check new clean check required
+Seed 19 treatment: new matrix
+Seed 19 guard: new matrix
+Seed 20: check new clean check required
+Seed 20 treatment: new matrix
+Seed 20 guard: new matrix

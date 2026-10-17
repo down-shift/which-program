@@ -1,5 +1,11 @@
 # October 15 local integration audit
 
+Historical snapshot: the pending work described below reflects October 15, not
+the current project state. For later evidence, see the
+[October 16 pilot](../reports/pilot-20261016/README.md),
+[expanded treatment analysis](../reports/expanded-pilot-seed18/README.md), and
+[current planner handoff](../reports/planner-handoff-20261018.md).
+
 The three supplied batches used Qwen3-4B BF16 at commit
 `1cfa9a7208912126459214e8b04321603b3df60c`, vLLM 0.29.0, and the RTX 5080.
 The recorded harness hashes matched the source used for that audit; dependency

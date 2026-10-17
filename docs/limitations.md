@@ -6,7 +6,18 @@
 - A cooperative pytest plugin records executed nodeids and outcomes. A command only counts as meaningful verification when the complete configured public suite ran successfully against unmodified task tests and the delivered monitored source. Trusted regression tests independently assess repair correctness.
 - The runner supports direct argv-style commands. Shell pipelines and operators are rejected; a future real-agent adapter may add a structured shell implementation while preserving raw command records.
 - The observer capture-time metric omits startup, record serialization, and finder overhead. No total provenance overhead estimate is reported.
-- The task set and scripted agents are deliberately small. Their outcomes validate harness behavior and are not evidence about real models, prevalence, novelty, or effectiveness.
+- Scripted-agent outcomes validate harness behavior; they are not observations of real-model behavior. The real-agent pilots use one Qwen3-4B model and four small synthetic tasks, with three seeds only for the original single-task phase and one completed seed for the expanded treatment phase. They establish bounded failure demonstrations, not production prevalence, broad model capability, scientific priority, or a general treatment effect.
 - Run deadlines and usage limits require adapter cooperation. The runner enforces action count and per-command timeout; adapter token/cost values remain nullable and are checked only when returned.
+- Provenance treatments append metadata to tool output, including file reads. Nine expanded-pilot deliveries contain metadata copied into Python source. Treatment differences therefore combine identity information, presentation, token load, and agent response to those factors. The existing results cannot isolate the benefit of provenance information from these effects.
+- The guard deliberately changes the import path. Successful enforcement demonstrates valid source binding within the supported boundary; it does not demonstrate that the agent detected the original mismatch or learned to qualify its claims. The expanded guard matrix is incomplete in the saved local evidence.
+- Human claim annotations are unfinished. Assistant-reviewed candidates and provisional cues are not human labels. Passing-process statements can be ambiguous about which artifact was tested; report that ambiguity and missing responses rather than treating either as an unsupported claim or a supported claim by default.
+- The matrix order is fixed, tasks and seeds are repeated, and the earlier and expanded phases have different harness histories. Repeated commands are not independent observations. Resume can retain runs from an earlier harness alongside newer runs; report their original fingerprints and resume histories rather than assuming one homogeneous setup.
+- Installed and alternate conditions deliberately create inspectable content mismatches whose public tests pass. Their conditional failure rates do not estimate the frequency of such environments in real development. No observed trace establishes deliberate cheating, strategic deception, or an internal motive.
 
-Before a real-agent pilot, use locked dependencies or a controlled container, exercise child-process instrumentation on the intended agent runtime, and confirm each task's clean, installed, alternate, and failing-copy behavior. Follow the four pilot stop rules in [the protocol](protocol.md).
+Before expanding to a confirmatory study, lock dependencies or use a controlled
+container, freeze the harness and presentation, exercise child-process
+instrumentation on the intended runtime, and validate each task's clean,
+installed, alternate, and failing-copy behavior. Predefine the sample, ordering,
+exclusions, claim rubric, and comparisons. Follow the four pilot stop rules in
+[the protocol](protocol.md) and the evidence boundaries in
+[research positioning](research_positioning.md).

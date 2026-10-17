@@ -10,8 +10,11 @@ The default is **Qwen/Qwen3-4B in BF16**, one sequence, 8,192 tokens of total co
 and 85% GPU memory utilization. This is the full 16-bit 4B option discussed for the
 RTX 5080 with 16 GB. The supplied October 15 logs confirm this model loaded on that
 GPU. They also show the original agent returned code suggestions without changing
-files. The corrected `local-json-v2` agent must pass a new clean integration check
-before a matrix can start; its real-model repair behavior remains to be tested.
+files. The corrected `local-json-v2` agent must pass a current clean integration
+check before a matrix can start. Subsequent October 16–17 model runs are analyzed
+in the [original pilot](../reports/pilot-20261016/README.md) and
+[expanded treatment pilot](../reports/expanded-pilot-seed18/README.md); these
+supersede the initial integration audit as the current empirical status.
 
 ## Commands
 

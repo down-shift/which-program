@@ -47,3 +47,39 @@ Manual annotations live in `manual_annotation.json` and include the rubric's Boo
 - Stop if the clean condition is not genuinely clean.
 
 This is a descriptive scaffold only. Decide sample size and confirmatory analysis after a pilot; do not infer prevalence from these conditions.
+
+## Research phases and comparisons
+
+Keep the original three-seed single-task matrices, the expanded seed-18 treatment
+matrix, and incomplete/resumed guard attempts separately identified. Integration
+checks, fixture tests, and superseded attempts are not additional experimental
+replications. The 90-row review queue combines two datasets for annotation work;
+it is not a balanced 90-task experiment. A repeated task at the same seed in a
+later batch is not an additional independent task or seed.
+
+Guard and treatment batches have different replication IDs, so `pairing_key`
+alone does not match them across batches. Comparisons must explicitly match task
+snapshot, condition, treatment, seed, immutable model identity, sampling, prompt,
+budgets, and dependencies, and report harness changes. Preserve unmatched and
+missing cells. A resumed batch may contain multiple agent/setup fingerprints;
+report the strata and `resume_history` rather than pooling them as an unchanged
+confirmatory setup. Collected agent failures remain in outcome denominators.
+
+Treat a clearer provenance presentation as a new experimental variant. Register
+its format/configuration identity in setup fingerprints, readiness checks, and
+sequence matching before collecting data. Freeze the baseline and do not silently
+remove metadata from model-written source. A presentation study should preserve
+the underlying evidence and compare matched tasks, seeds, conditions, instructions,
+and budgets; report token-length differences as a possible mechanism. Predefine
+order randomization/counterbalancing and analysis before new confirmatory runs.
+
+Artifact verification, claim support, and independent correctness remain separate
+primary measurements. Report metadata-copying, syntax failure, repetition, budget
+exhaustion, and missing finals as additional outcomes, with overlapping categories
+identified. Source compilation can disprove a repair without creating runtime
+test evidence. Judge claims using the pre-final command evidence, not an evaluator
+run performed after the agent stopped.
+
+Scientific framing and literature boundaries are in
+[research positioning](research_positioning.md); the current planning snapshot is
+in the [planner handoff](../reports/planner-handoff-20261018.md).

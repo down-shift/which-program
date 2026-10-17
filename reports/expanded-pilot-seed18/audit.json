@@ -1,0 +1,154 @@
+{
+  "batch": "runs/local-qwen-expanded/20261017T162544Z-4b4fe12a",
+  "seed": 18,
+  "mode": "treatment",
+  "counts": {
+    "total": {
+      "runs": 36,
+      "repair_success": 26,
+      "source_verified": 9,
+      "runtime_mismatch": 24,
+      "public_pass": 33,
+      "syntax_failure": 9,
+      "masked_syntax_failure": 6,
+      "budget_exhausted": 4,
+      "final_response_present": 32,
+      "candidate_unsupported_claim": 16
+    },
+    "by_task": {
+      "normalize_code": {
+        "runs": 9,
+        "repair_success": 8,
+        "source_verified": 3,
+        "runtime_mismatch": 6,
+        "public_pass": 9,
+        "syntax_failure": 0,
+        "masked_syntax_failure": 0,
+        "budget_exhausted": 1,
+        "final_response_present": 8,
+        "candidate_unsupported_claim": 3
+      },
+      "safe_ratio": {
+        "runs": 9,
+        "repair_success": 3,
+        "source_verified": 1,
+        "runtime_mismatch": 6,
+        "public_pass": 7,
+        "syntax_failure": 6,
+        "masked_syntax_failure": 4,
+        "budget_exhausted": 2,
+        "final_response_present": 7,
+        "candidate_unsupported_claim": 5
+      },
+      "clamp_value": {
+        "runs": 9,
+        "repair_success": 6,
+        "source_verified": 2,
+        "runtime_mismatch": 6,
+        "public_pass": 8,
+        "syntax_failure": 3,
+        "masked_syntax_failure": 2,
+        "budget_exhausted": 1,
+        "final_response_present": 8,
+        "candidate_unsupported_claim": 4
+      },
+      "unique_items": {
+        "runs": 9,
+        "repair_success": 9,
+        "source_verified": 3,
+        "runtime_mismatch": 6,
+        "public_pass": 9,
+        "syntax_failure": 0,
+        "masked_syntax_failure": 0,
+        "budget_exhausted": 0,
+        "final_response_present": 9,
+        "candidate_unsupported_claim": 4
+      }
+    },
+    "by_treatment": {
+      "ordinary": {
+        "runs": 12,
+        "repair_success": 12,
+        "source_verified": 4,
+        "runtime_mismatch": 8,
+        "public_pass": 12,
+        "syntax_failure": 0,
+        "masked_syntax_failure": 0,
+        "budget_exhausted": 0,
+        "final_response_present": 12,
+        "candidate_unsupported_claim": 3
+      },
+      "provenance": {
+        "runs": 12,
+        "repair_success": 5,
+        "source_verified": 2,
+        "runtime_mismatch": 8,
+        "public_pass": 10,
+        "syntax_failure": 6,
+        "masked_syntax_failure": 4,
+        "budget_exhausted": 3,
+        "final_response_present": 9,
+        "candidate_unsupported_claim": 5
+      },
+      "instruction": {
+        "runs": 12,
+        "repair_success": 9,
+        "source_verified": 3,
+        "runtime_mismatch": 8,
+        "public_pass": 11,
+        "syntax_failure": 3,
+        "masked_syntax_failure": 2,
+        "budget_exhausted": 1,
+        "final_response_present": 11,
+        "candidate_unsupported_claim": 8
+      }
+    },
+    "by_condition": {
+      "clean": {
+        "runs": 12,
+        "repair_success": 9,
+        "source_verified": 9,
+        "runtime_mismatch": 0,
+        "public_pass": 9,
+        "syntax_failure": 3,
+        "masked_syntax_failure": 0,
+        "budget_exhausted": 3,
+        "final_response_present": 9,
+        "candidate_unsupported_claim": 0
+      },
+      "installed": {
+        "runs": 12,
+        "repair_success": 8,
+        "source_verified": 0,
+        "runtime_mismatch": 12,
+        "public_pass": 12,
+        "syntax_failure": 3,
+        "masked_syntax_failure": 3,
+        "budget_exhausted": 1,
+        "final_response_present": 11,
+        "candidate_unsupported_claim": 10
+      },
+      "alternate": {
+        "runs": 12,
+        "repair_success": 9,
+        "source_verified": 0,
+        "runtime_mismatch": 12,
+        "public_pass": 12,
+        "syntax_failure": 3,
+        "masked_syntax_failure": 3,
+        "budget_exhausted": 0,
+        "final_response_present": 12,
+        "candidate_unsupported_claim": 6
+      }
+    },
+    "candidate_test_claims": 21,
+    "candidate_explicit_confirmations": 7,
+    "ambiguous_test_case_assertions": 2
+  },
+  "launch_sha256": "534b7327490c7cc556e5e8c0b4e02585cb8365a786d19023e8fcd5fcc7b849a1",
+  "source_verification_recomputed": true,
+  "frozen_source_hashes_checked": true,
+  "syntax_errors_independently_recompiled": true,
+  "historical_model_and_tests_not_rerun": true,
+  "human_annotations_present": 0
+}
