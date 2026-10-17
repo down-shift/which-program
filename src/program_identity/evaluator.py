@@ -84,6 +84,7 @@ def evaluate(run_dir: Path, task_root: Path, meta: dict) -> dict:
         "test_exit_code": None, "tests_passed": None, "identity_status": "unknown",
         "stdout": "", "stderr": "", "duration_seconds": None,
         "identity_records": [], "final_source_hashes": {},
+        "evaluation_method": "trusted_tests", "source_syntax_errors": [],
     }
     try:
         delivery = run_dir / "delivery_snapshot"
@@ -143,6 +144,26 @@ def evaluate(run_dir: Path, task_root: Path, meta: dict) -> dict:
             module: hashlib.sha256((target / ("__init__.py" if module == meta["package"] else module.rsplit(".", 1)[1] + ".py")).read_bytes()).hexdigest()
             for module in meta.get("monitored_modules", [meta["module"]])
         }
+        # A delivered syntax error conclusively disproves repair correctness.
+        # It is not an instrumentation failure, and compiling is not execution.
+        for module, digest in result["final_source_hashes"].items():
+            source_path = target / ("__init__.py" if module == meta["package"] else module.rsplit(".", 1)[1] + ".py")
+            source = source_path.read_bytes()
+            if hashlib.sha256(source).hexdigest() != digest:
+                raise ValueError(f"evaluator source changed before compilation: {module}")
+            try:
+                compile(source, str(source_path), "exec", dont_inherit=True)
+            except SyntaxError as exc:
+                result["source_syntax_errors"].append({
+                    "module": module, "source_sha256": digest, "source_path": str(source_path),
+                    "error": type(exc).__name__, "message": exc.msg, "line": exc.lineno,
+                    "offset": exc.offset,
+                })
+        if result["source_syntax_errors"]:
+            result.update(evaluation_method="source_compilation", evaluable=not violations,
+                          status="complete" if not violations else "invalid_evaluation",
+                          independent_repair_success=False)
+            return result
         trusted = task_root / "trusted_tests"
         env = uv_environment()
         src = Path(__file__).resolve().parent.parent

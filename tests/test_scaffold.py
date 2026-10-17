@@ -302,6 +302,39 @@ def test_evaluator_validates_frozen_delivery_and_rejects_wrong_patch(tmp_path):
             assert result["identity_status"] == "confirmed_match"
 
 
+def test_delivered_syntax_error_is_a_repair_failure_without_execution_claim(tmp_path, monkeypatch):
+    from program_identity.local import run_infrastructure_error
+
+    source = 'def safe_ratio(numerator, denominator, default=0.0):\n    return default\n\n[Runtime provenance]\n[]\n'
+    meta, task, run = _eval_run(tmp_path, "safe_ratio", source)
+
+    def unexpected_test_execution(*args, **kwargs):
+        raise AssertionError("Syntax validation must not claim to run trusted tests")
+
+    monkeypatch.setattr(evaluator_module, "run_process_group", unexpected_test_execution)
+    result = evaluate(run, task, meta)
+    assert result["evaluable"] is True and result["status"] == "complete"
+    assert result["evaluation_method"] == "source_compilation"
+    assert result["independent_repair_success"] is False
+    assert result["tests_passed"] is None and result["test_exit_code"] is None
+    assert result["identity_status"] == "unknown" and result["identity_records"] == []
+    error = result["source_syntax_errors"][0]
+    assert error["module"] == "package.rules" and error["error"] == "SyntaxError"
+    assert error["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+    assert run_infrastructure_error({"termination": "context_or_token_budget_exhausted"}, result) is None
+    assert json.loads((run / "selected_evaluation.json").read_text())["source_syntax_errors"]
+    assert len(read_jsonl(run / "evaluation_history.jsonl")) == 1
+
+
+def test_syntax_failure_does_not_hide_scope_violation(tmp_path):
+    meta, task, run = _eval_run(tmp_path, "safe_ratio", "def broken(:\n")
+    (run / "delivery_snapshot/checkout/package/__init__.py").write_text("changed = True\n")
+    result = evaluate(run, task, meta)
+    assert result["source_syntax_errors"]
+    assert result["scope_violations"] == ["package/__init__.py"]
+    assert result["evaluable"] is False and result["status"] == "invalid_evaluation"
+
+
 def test_evaluator_timeout_is_uncertain_and_cleanup_is_finalized(tmp_path, monkeypatch):
     good = "import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n"
     meta, task, run = _eval_run(tmp_path, "normalize_code", good)
