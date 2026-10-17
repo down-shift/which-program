@@ -1,0 +1,1 @@
+Fix `package.rules.unique_items(items)` in `checkout/package/rules.py`. Accept any iterable of hashable items and return a list containing the first occurrence of each distinct item, in input order. Use normal Python equality and hashing, keep strings case-sensitive, support mixed hashable types, and do not modify the input. Empty input must return an empty list.

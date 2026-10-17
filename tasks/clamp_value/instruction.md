@@ -1,0 +1,1 @@
+Fix `package.rules.clamp_value(value, lower, upper)` in `checkout/package/rules.py`. For finite numeric inputs, return lower if value is below lower, upper if it is above upper, and value otherwise. Equal bounds are allowed. Raise ValueError when lower is greater than upper. Preserve fractional values; do not coerce inputs to integers.

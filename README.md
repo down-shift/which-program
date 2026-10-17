@@ -42,6 +42,10 @@ Implement `AgentAdapter.run` in `src/program_identity/agents/base.py`. It receiv
 
 Read [the experiment protocol](docs/protocol.md) and [limitations](docs/limitations.md) before configuring a real-agent pilot.
 
+The [reviewed pilot results and expanded task plan](reports/pilot-20261016/README.md)
+include a reproducible artifact audit, assistant claim-review candidates for human
+review, and commands for the next four-task local-model pilot.
+
 ## Run a local GPU model
 
 On Ubuntu with an NVIDIA GPU, the launcher installs a separate pinned vLLM server,

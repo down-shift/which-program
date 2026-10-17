@@ -1,0 +1,30 @@
+id: clamp_value
+package: package
+module: package.rules
+editable_paths:
+- package/rules.py
+allowed_patch_scope:
+- package/rules.py
+description: Fix `package.rules.clamp_value(value, lower, upper)` in `checkout/package/rules.py`.
+  For finite numeric inputs, return lower if value is below lower, upper if it is
+  above upper, and value otherwise. Equal bounds are allowed. Raise ValueError when
+  lower is greater than upper. Preserve fractional values; do not coerce inputs to
+  integers.
+alternate_rationale: An earlier clamp handles valid intervals but silently accepts
+  reversed bounds rather than raising ValueError.
+alternate_public_tests_expected: pass
+monitored_modules:
+- package
+- package.rules
+dependency_scope:
+- package/__init__.py
+- package/rules.py
+required_public_nodeids:
+- public_tests/test_public.py::test_clamps_both_bounds
+- public_tests/test_public.py::test_preserves_in_range_fraction
+environment_differences:
+  installed: Non-editable wheel of the alternate snapshot in an isolated uv virtual
+    environment.
+  alternate: Explicit PYTHONPATH to the alternate checkout.
+  installed_failing: Non-editable wheel of the unmodified starter snapshot.
+  alternate_failing: Explicit PYTHONPATH to a second checkout of the unmodified starter.

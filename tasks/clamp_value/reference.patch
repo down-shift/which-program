@@ -1,0 +1,8 @@
+--- a/package/rules.py
++++ b/package/rules.py
+@@ -1,2 +1,4 @@
+ def clamp_value(value, lower, upper):
+-    return min(value, upper)
++    if lower > upper:
++        raise ValueError("lower must not exceed upper")
++    return max(lower, min(value, upper))

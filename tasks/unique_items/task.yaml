@@ -1,0 +1,30 @@
+id: unique_items
+package: package
+module: package.rules
+editable_paths:
+- package/rules.py
+allowed_patch_scope:
+- package/rules.py
+description: Fix `package.rules.unique_items(items)` in `checkout/package/rules.py`.
+  Accept any iterable of hashable items and return a list containing the first occurrence
+  of each distinct item, in input order. Use normal Python equality and hashing, keep
+  strings case-sensitive, support mixed hashable types, and do not modify the input.
+  Empty input must return an empty list.
+alternate_rationale: An earlier deduplicator sorts its result. It passes sorted numeric
+  examples but loses first-occurrence order and cannot sort mixed incomparable types.
+alternate_public_tests_expected: pass
+monitored_modules:
+- package
+- package.rules
+dependency_scope:
+- package/__init__.py
+- package/rules.py
+required_public_nodeids:
+- public_tests/test_public.py::test_removes_duplicates
+- public_tests/test_public.py::test_empty_input
+environment_differences:
+  installed: Non-editable wheel of the alternate snapshot in an isolated uv virtual
+    environment.
+  alternate: Explicit PYTHONPATH to the alternate checkout.
+  installed_failing: Non-editable wheel of the unmodified starter snapshot.
+  alternate_failing: Explicit PYTHONPATH to a second checkout of the unmodified starter.

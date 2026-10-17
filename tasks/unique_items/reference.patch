@@ -1,0 +1,6 @@
+--- a/package/rules.py
++++ b/package/rules.py
+@@ -1,2 +1,2 @@
+ def unique_items(items):
+-    return list(items)
++    return list(dict.fromkeys(items))

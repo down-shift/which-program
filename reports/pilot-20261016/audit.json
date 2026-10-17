@@ -1,0 +1,91 @@
+{
+  "batches": [
+    {
+      "path": "runs/local-qwen/20261016T081714Z-a024de13",
+      "seed": 18,
+      "stage": "check",
+      "mode": "treatment",
+      "launch_sha256": "d3fcb9714f0a9b35ec21765f0b0a7f0e21da665dd074d99aa944449929288564"
+    },
+    {
+      "path": "runs/local-qwen/20261016T081735Z-0fc05d6f",
+      "seed": 18,
+      "stage": "matrix",
+      "mode": "treatment",
+      "launch_sha256": "003558e69994721c365c2f05354eb87a00fc0ee9fe664473f99a1dbe2851465a"
+    },
+    {
+      "path": "runs/local-qwen/20261016T081817Z-139018ca",
+      "seed": 18,
+      "stage": "matrix",
+      "mode": "guard",
+      "launch_sha256": "3f093ab10e7098542b41b8b2a240ac85acc03b6a6da43a09e8730212f998486d"
+    },
+    {
+      "path": "runs/local-qwen/20261016T081904Z-d3358ffb",
+      "seed": 19,
+      "stage": "check",
+      "mode": "treatment",
+      "launch_sha256": "45630185a4a19c3c7dfa74185ef27303ca9e49accffdc542aaea4098c7ca3e5b"
+    },
+    {
+      "path": "runs/local-qwen/20261016T081924Z-25529a1b",
+      "seed": 19,
+      "stage": "matrix",
+      "mode": "treatment",
+      "launch_sha256": "ee9845ae33bde4d43d8b8cddeff14c52dd5cc8546b3bd3bb864a30e80a951701"
+    },
+    {
+      "path": "runs/local-qwen/20261016T082007Z-b73727bd",
+      "seed": 19,
+      "stage": "matrix",
+      "mode": "guard",
+      "launch_sha256": "9d81ce8b20c020e24722035d6cab10a2f8a1d36aabc5e136c43020b4a7415e21"
+    },
+    {
+      "path": "runs/local-qwen/20261016T082053Z-a1d24998",
+      "seed": 20,
+      "stage": "check",
+      "mode": "treatment",
+      "launch_sha256": "45dcf35add7ddc116fce520fb52339642f48960c49d886681bbc0fe931111400"
+    },
+    {
+      "path": "runs/local-qwen/20261016T082115Z-73ab2b05",
+      "seed": 20,
+      "stage": "matrix",
+      "mode": "treatment",
+      "launch_sha256": "243ad04ab4b4b02bf95182dd43f4121a3d043d7d680eefd0731c09968bfa74a2"
+    },
+    {
+      "path": "runs/local-qwen/20261016T082200Z-ab320f55",
+      "seed": 20,
+      "stage": "matrix",
+      "mode": "guard",
+      "launch_sha256": "8c5510fcb071aafab8ecd61f557668ab44928799f755300f744771a94129b651"
+    }
+  ],
+  "counts": {
+    "treatment": {
+      "runs": 27,
+      "repairs": 24,
+      "verified": 9,
+      "mismatches": 18,
+      "exhausted": 3
+    },
+    "guard": {
+      "runs": 27,
+      "repairs": 27,
+      "verified": 27,
+      "mismatches": 0,
+      "exhausted": 0
+    },
+    "assistant_candidates": {
+      "final_responses": 51,
+      "test_claims": 33,
+      "unsupported_contextual_claims": 11,
+      "explicit_unsupported_correctness_confirmations": 2
+    }
+  },
+  "identical_matrix_setup_except_seed_mode_batch": true,
+  "human_annotations_present": 0
+}
