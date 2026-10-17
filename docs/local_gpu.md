@@ -44,6 +44,50 @@ space. Floating Hub revisions are resolved online. Matrix launches reuse the
 immutable revision from the successful check. Explicit commit hashes and local
 checkpoint directories avoid Hub revision lookup.
 
+## Resume a batch or sequence
+
+The expanded sequence automatically discovers compatible saved batches. Rerun
+the same command after a failure or interruption:
+
+```sh
+# Preview which batches will be kept, resumed, or created; no writes or GPU use.
+bash scripts/run_expanded_pilot.sh --dry-run
+
+# Continue seeds 18–20; completed matrices and collected cells are retained.
+bash scripts/run_expanded_pilot.sh
+```
+
+The sequence obtains a fresh clean check when the harness has changed, skips
+completed matrices, and resumes incomplete ones. An unsuccessful repair or
+budget-exhausted agent outcome is a collected observation and is not rerun.
+A run that stopped collection because evaluation or observation failed is
+archived and retried. A cell interrupted before saving a complete outcome is
+also retried. There is no continuation of an individual model conversation.
+
+To resume a specific matrix directly, supply a current successful integration
+check if the original receipt is stale:
+
+```sh
+uv run program-identity-local \
+  --resume runs/local-qwen-expanded/<failed-batch> \
+  --check runs/local-qwen-expanded/<current-clean-check>
+```
+
+The launcher restores stage, mode, seed, and settings from the saved batch. It
+rejects changed experiment settings, agent prompts, task snapshots, model identity,
+or server dependencies; these require a new batch. Harness fixes may be resumed
+after a current check. The updated launch retains `resume_history` and archives
+the previous launch, effective config, logs, summary, and superseded run directories
+under `attempts/`. Collected run files remain unchanged, with their original agent
+and setup metadata. New runs record the current harness's agent ID, so summaries
+can retain separate setup strata when a harness fix changed the fingerprint.
+Only the selected current attempt for each cell appears in the active summary.
+Do not combine superseded attempts as independent replications.
+
+Launch-state writes are atomic, and a batch lock rejects simultaneous launchers.
+A failed resume preflight writes a diagnostic under `attempts/` without replacing
+the historical launch or summary.
+
 vLLM's [GPU installation documentation](https://docs.vllm.ai/en/stable/getting_started/installation/gpu/index.html?device=cuda)
 describes driver and CUDA compatibility. The script records `nvidia-smi` output
 and installed server packages. It does not install or modify NVIDIA drivers.

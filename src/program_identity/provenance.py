@@ -97,7 +97,13 @@ class _SourceLoader:
             # This custom loader compiles the captured bytes, so an existing .pyc is ignored.
             module.__file__ = str(self.origin)
             module.__cached__ = None
-            code = compile(source, str(self.origin), "exec")
+            try:
+                code = compile(source, str(self.origin), "exec")
+            except SyntaxError:
+                # Preserve captured identity without claiming execution.
+                row["source_identity_status"] = row["identity_status"]
+                row["compilation_status"] = "syntax_error"
+                raise
             row["instrumentation"] = "ok"
             row["bytecode_cache_ignored"] = True
             row["capture_seconds"] = time.perf_counter() - started

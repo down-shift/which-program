@@ -107,6 +107,9 @@ bash scripts/run_expanded_pilot.sh
 
 This runs fresh four-task integration checks for each seed, followed by separate
 36-cell unguarded and guard matrices: 216 experimental runs plus 12 check runs.
+The sequence now discovers saved progress automatically: rerunning the command
+keeps completed matrices and resumes failed ones. A fresh check is required only
+when no compatible current check exists. Use `--dry-run` to inspect the plan.
 Historical checks cannot authorize the changed task set. The GPU experiments
 have not been run from this Mac workspace. Provenance compression or larger
 budgets should be configured as separately labeled follow-up experiments.

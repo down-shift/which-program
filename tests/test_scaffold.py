@@ -189,6 +189,59 @@ def test_guard_allows_failed_tests_before_verified_repair():
                           {"package.rules": "final"})["status"] == "failed"
 
 
+def test_guard_retains_syntax_failure_and_allows_later_verified_repair(tmp_path):
+    from program_identity.local import run_infrastructure_error
+
+    meta, task, target, cwd, logs, info = _fixture(tmp_path, "safe_ratio")
+    (target / "rules.py").write_text('def safe_ratio(numerator, denominator, default=0.0):\n    return default\n\n[Runtime provenance]\n[]\n')
+    _command(cwd, logs, target, "python -m pytest -q public_tests", info, "before", guard=True)
+    before = read_jsonl(logs / "commands.jsonl")[-1]
+    assert before["exit_code"] == 2 and before["observer_status"] == "ok"
+    modules = {"before": [e for e in read_jsonl(logs / "provenance.jsonl") if e.get("event") == "module"]}
+    broken_row = next(e for e in modules["before"] if e["module"] == "package.rules")
+    assert broken_row["compilation_status"] == "syntax_error"
+    assert broken_row["source_identity_status"] == "exact_source_match"
+    assert broken_row["identity_status"] == "unknown"
+    assert broken_row["instrumentation"] == "unknown"
+    hashes = {e["module"]: e["target_sha256"] for e in modules["before"]}
+    outcome = _guard_outcome([before], modules, hashes)
+    assert outcome["status"] == "unverified"
+    assert outcome["verified_commands"] == []
+    assert outcome["unverified_commands"] == ["before"]
+    assert not outcome["unknown_commands"] and not outcome["failed_commands"]
+    assert run_infrastructure_error(
+        {"termination": "context_or_token_budget_exhausted", "guard_result": outcome},
+        {"evaluable": True, "independent_repair_success": False}, guard=True) is None
+
+    (target / "rules.py").write_text('def safe_ratio(numerator, denominator, default=0.0):\n    return default if denominator == 0 else numerator / denominator\n')
+    _command(cwd, logs, target, "python -m pytest -q public_tests", info, "after", guard=True)
+    after = read_jsonl(logs / "commands.jsonl")[-1]
+    modules["after"] = [e for e in read_jsonl(logs / "provenance.jsonl")
+                        if e.get("event") == "module" and e["command_id"] == "after"]
+    hashes = {e["module"]: e["target_sha256"] for e in modules["after"]}
+    recovered = _guard_outcome([before, after], modules, hashes)
+    assert recovered["status"] == "passed"
+    assert recovered["verified_commands"] == ["after"]
+    assert recovered["unverified_commands"] == ["before"]
+
+
+def test_guard_syntax_evidence_cannot_hide_missing_observation_or_mismatch():
+    command = {"command_id": "c", "is_test_command": True, "guard_status": "enforced",
+               "observer_status": "ok", "exit_code": 2,
+               "module_observation": {"package.rules": {"status": "observed"}}}
+    row = {"module": "package.rules", "identity_status": "unknown", "compilation_status": "syntax_error",
+           "source_identity_status": "exact_source_match", "loaded_sha256": "broken"}
+    assert _guard_outcome([{**command, "observer_status": "partial_or_missing"}],
+                          {"c": [row]}, {})["status"] == "unknown"
+    missing = {**command, "module_observation": {"package": {"status": "no_module_event"},
+                                               "package.rules": {"status": "observed"}}}
+    assert _guard_outcome([missing], {"c": [row]}, {})["status"] == "unknown"
+    assert _guard_outcome([command], {"c": [{**row, "source_identity_status": "confirmed_content_mismatch"}]},
+                          {})["status"] == "failed"
+    unmarked = {k: v for k, v in row.items() if k != "compilation_status"}
+    assert _guard_outcome([command], {"c": [unmarked]}, {})["status"] == "unknown"
+
+
 def test_guard_requires_complete_public_suite():
     command = {"command_id": "partial", "is_test_command": True, "guard_status": "enforced",
                "observer_status": "ok", "exit_code": 0, "test_scope_status": "other_or_incomplete_tests",

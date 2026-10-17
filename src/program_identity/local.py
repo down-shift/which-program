@@ -31,7 +31,9 @@ from .uv_support import uv_environment
 
 
 def _save(path, value):
-    path.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    temporary = path.with_name(path.name + f".tmp-{uuid.uuid4().hex[:8]}")
+    temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 def harness_hashes():
@@ -102,6 +104,67 @@ def load_check(path, cfg):
         # Pin subsequent matrices to the exact model that passed the check.
         cfg["model"]["revision"] = checked["model"]["revision"]
     return receipt
+
+
+def experiment_settings(cfg):
+    """Stable settings for resuming; runtime receipts and server aliases differ."""
+    model_keys = ("adapter", "name", "checkpoint", "revision", "dtype", "quantization",
+                  "context_length", "enable_thinking", "temperature", "top_p", "top_k",
+                  "min_p", "repetition_penalty", "max_output_tokens", "request_timeout_seconds")
+    return {**{key: cfg.get(key) for key in ("tasks", "conditions", "treatments", "budgets", "seed")},
+            "model": {key: cfg["model"].get(key) for key in model_keys},
+            "server": {key: cfg["server"].get(key) for key in ("package", "python", "gpu_memory_utilization")}}
+
+
+def resume_runs(batch, cfg, guard):
+    """Reuse collected outcomes, including agent failures; retry collection failures."""
+    expected = set(itertools.product(cfg["tasks"], cfg["conditions"], cfg["treatments"]))
+    retained, retry = {}, []
+    for path in sorted((batch / "runs").iterdir()):
+        if not path.is_dir():
+            continue
+        try:
+            run = json.loads((path / "run.json").read_text())
+        except (OSError, ValueError):
+            retry.append(path)
+            continue
+        key = (run["task_id"], run["condition"], run["treatment"])
+        if key not in expected or run["mode"] != ("guard" if guard else "treatment"):
+            raise ValueError(f"unexpected run in resumed batch: {path}")
+        if run.get("task_hashes") != task_hashes(run["task_id"]):
+            raise ValueError(f"task changed since {path}; start a new batch")
+        try:
+            evaluation = json.loads((path / "selected_evaluation.json").read_text())
+            if run_infrastructure_error(run, evaluation, guard=guard):
+                retry.append(path)
+                continue
+            outcome = integration_readiness(path)
+        except (OSError, ValueError, KeyError):
+            retry.append(path)
+            continue
+        if key in retained:
+            raise ValueError(f"duplicate collected cell in resumed batch: {key}")
+        retained[key] = outcome
+    return retained, retry
+
+
+def archive_resume(batch, launch, retry):
+    """Preserve the original launch, logs, and superseded attempts outside summaries."""
+    archive = batch / "attempts" / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
+    archive.mkdir(parents=True)
+    for name in ("launch.json", "config.yaml", "requested-config.yaml", "server.log",
+                 "server-packages.txt", "readiness.json"):
+        if (batch / name).exists():
+            shutil.copy2(batch / name, archive / name)
+    for path in retry:
+        shutil.move(str(path), str(archive / path.name))
+    for name in ("summary.json", "summary.md"):
+        if (batch / "runs" / name).exists():
+            shutil.copy2(batch / "runs" / name, archive / name)
+    return {"archive": str(archive.relative_to(batch)), "previous_status": launch["status"],
+            "previous_setup_fingerprint": launch.get("setup_fingerprint"),
+            "previous_harness_source_hashes": launch.get("harness_source_hashes"),
+            "retried_run_ids": [p.name for p in retry], "resumed_at": time.time()}
 
 
 def validate_local(cfg):
@@ -246,15 +309,35 @@ def wait_ready(process, base_url, alias, timeout):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default=str(ROOT / "configs/local-qwen.yaml"))
-    parser.add_argument("--stage", choices=("check", "matrix"), default="check")
-    parser.add_argument("--guard", action="store_true", help="run guard mode only, in its own batch")
+    parser.add_argument("--config")
+    parser.add_argument("--stage", choices=("check", "matrix"))
+    parser.add_argument("--guard", action="store_true", default=None, help="run guard mode only, in its own batch")
+    parser.add_argument("--resume", type=Path, help="continue an existing matrix, preserving collected outcomes")
     parser.add_argument("--check", type=Path, help="successful clean-check batch required before running a matrix")
     parser.add_argument("--model", help="override Hugging Face checkpoint ID or local checkpoint directory")
     parser.add_argument("--revision", help="override Hub revision (resolved to a commit before launch)")
     parser.add_argument("--dry-run", action="store_true", help="print plan without installs, downloads, GPU use, or writes")
     args = parser.parse_args(argv)
-    config_path = Path(args.config).resolve()
+    prior_launch, prior_cfg = None, None
+    if args.resume:
+        args.resume = args.resume.resolve()
+        try:
+            prior_launch = json.loads((args.resume / "launch.json").read_text())
+            saved_config = args.resume / "config.yaml"
+            if not saved_config.exists():
+                saved_config = args.resume / "requested-config.yaml"
+            prior_cfg = yaml.safe_load(saved_config.read_text())
+        except (OSError, ValueError) as exc:
+            parser.error(f"cannot resume batch: {exc}")
+        if prior_launch.get("stage") != "matrix" or args.stage not in (None, "matrix"):
+            parser.error("--resume requires a matrix batch")
+        if args.guard is True and prior_launch["mode"] != "guard":
+            parser.error("--guard differs from resumed batch mode")
+        args.stage, args.guard = "matrix", prior_launch["mode"] == "guard"
+        args.config = args.config or str(saved_config)
+    args.stage = args.stage or "check"
+    args.guard = bool(args.guard)
+    config_path = Path(args.config or ROOT / "configs/local-qwen.yaml").resolve()
     cfg = yaml.safe_load(config_path.read_text())
     if not isinstance(cfg, dict):
         parser.error("configuration must be a mapping")
@@ -271,6 +354,30 @@ def main(argv=None):
     if errors:
         parser.error("; ".join(errors))
     cfg["model"].update(adapter_metadata())
+    retained, retry = {}, []
+    if args.resume:
+        # An effective batch config points inside its own runs directory.
+        cfg["runs_dir"] = str(args.resume.parent)
+        if (cfg["model"]["checkpoint"] == prior_cfg["model"]["checkpoint"] and
+                cfg["model"]["revision"] == "main"):
+            cfg["model"]["revision"] = prior_cfg["model"]["revision"]
+        if experiment_settings(cfg) != experiment_settings(prior_cfg):
+            parser.error("resumed experiment settings differ; start a new batch")
+        if (prior_cfg["model"].get("prompt_sha256") and
+                prior_cfg["model"]["prompt_sha256"] != cfg["model"]["prompt_sha256"]):
+            parser.error("agent prompt changed since resumed batch; start a new batch")
+        try:
+            retained, retry = resume_runs(args.resume, cfg, args.guard)
+        except (OSError, ValueError, KeyError) as exc:
+            parser.error(str(exc))
+        expected_count = len(list(itertools.product(cfg["tasks"], cfg["conditions"], cfg["treatments"])))
+        if (prior_launch["status"] == "completed" and len(retained) == expected_count
+                and not retry and not args.dry_run):
+            print(f"Batch: {args.resume}", flush=True)
+            print(f"completed: {args.resume} (all collected outcomes retained; nothing to run)")
+            return 0
+        if args.check is None and prior_launch.get("check_batch"):
+            args.check = Path(prior_launch["check_batch"])
     receipt = None
     if args.stage == "matrix" and not args.dry_run:
         if args.check is None:
@@ -285,11 +392,13 @@ def main(argv=None):
     python = environment / "bin/python"
     base_url = f"http://127.0.0.1:{server['port']}/v1"
     combinations = list(itertools.product(cfg["tasks"], cfg["conditions"], cfg["treatments"]))
-    batch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    batch_id = prior_launch["batch_id"] if prior_launch else datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     alias = "program-identity-" + batch_id
     if args.dry_run:
         print(json.dumps({"stage": args.stage, "mode": "guard" if args.guard else "treatment",
-                          "runs": combinations, "server_command": server_command(cfg, python, alias),
+                          "runs": [c for c in combinations if c not in retained],
+                          "retained_run_count": len(retained), "resume_batch": str(args.resume) if args.resume else None,
+                          "server_command": server_command(cfg, python, alias),
                           "server_package": server["package"], "environment": str(environment),
                           "agent": adapter_metadata(), "requires_successful_check": args.stage == "matrix"}, indent=2))
         return 0
@@ -302,20 +411,42 @@ def main(argv=None):
         except OSError:
             parser.error(f"port {server['port']} is in use; change server.port (existing servers are never adopted)")
     base = Path(cfg.get("runs_dir", "runs/local-qwen"))
-    batch = (base if base.is_absolute() else ROOT / base) / batch_id
-    batch.mkdir(parents=True, exist_ok=False)
-    shutil.copy2(config_path, batch / "requested-config.yaml")
+    batch = args.resume or (base if base.is_absolute() else ROOT / base) / batch_id
+    if args.resume:
+        batch_id = prior_launch["batch_id"]
+        alias = "program-identity-" + batch_id
+    else:
+        batch.mkdir(parents=True, exist_ok=False)
+        shutil.copy2(config_path, batch / "requested-config.yaml")
     cfg.update(runs_dir=str(batch / "runs"), replication_id=batch_id, _replication_id=batch_id)
-    (batch / "runs").mkdir()
-    launch = {"schema_version": 2, "status": "starting", "stage": args.stage,
+    (batch / "runs").mkdir(exist_ok=bool(args.resume))
+    # Hold an advisory lock until cleanup so two resumes cannot mutate one batch.
+    import fcntl
+    batch_lock = (batch / ".launcher.lock").open("a")
+    try:
+        fcntl.flock(batch_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        batch_lock.close()
+        parser.error("this batch already has an active launcher")
+    if args.resume:
+        # Re-read under the lock in case a previous launcher just finished.
+        try:
+            prior_launch = json.loads((batch / "launch.json").read_text())
+            retained, retry = resume_runs(batch, cfg, args.guard)
+        except (OSError, ValueError, KeyError) as exc:
+            batch_lock.close()
+            parser.error(str(exc))
+    launch = dict(prior_launch) if prior_launch else {"schema_version": 2, "status": "starting", "stage": args.stage,
               "mode": "guard" if args.guard else "treatment", "batch_id": batch_id,
               "started_at": time.time(), "source_config": str(config_path), "run_count": len(combinations),
               "planned_run_count": len(combinations), "completed_run_count": 0, "outcomes": [],
               "check_batch": str(args.check.resolve()) if args.check else None}
-    launch["harness_python"] = {"executable": sys.executable, "version": sys.version}
-    launch["harness_source_hashes"] = harness_hashes()
+    if not args.resume:
+        launch["harness_python"] = {"executable": sys.executable, "version": sys.version}
+        launch["harness_source_hashes"] = harness_hashes()
     process = None
     interrupted = False
+    resume_committed = False
     def handle_signal(signum, frame):
         raise KeyboardInterrupt(f"received signal {signum}")
     old_term = signal.signal(signal.SIGTERM, handle_signal)
@@ -337,12 +468,33 @@ def main(argv=None):
         if version != server["package"].split("==", 1)[1]:
             raise ValueError(f"model environment has vLLM {version}, expected {server['package']}; use a fresh server.environment")
         freeze = subprocess.check_output(["uv", "pip", "freeze", "--python", str(python)], env=env, text=True)
-        (batch / "server-packages.txt").write_text(freeze)
         cfg["model"]["server_packages_sha256"] = hashlib.sha256(freeze.encode()).hexdigest()
         launch["setup_fingerprint"] = setup_fingerprint(cfg)
         launch["agent_id"] = f"local-chat/{PROTOCOL_VERSION}/{launch['setup_fingerprint'][:12]}"
         if receipt and receipt.get("setup_fingerprint") != launch["setup_fingerprint"]:
             raise ValueError("checked setup differs: model, prompt, task snapshots, sampling, budgets, dependencies, or harness changed; run a new clean check")
+        if args.resume:
+            previous_packages = prior_cfg["model"].get("server_packages_sha256")
+            if previous_packages and previous_packages != cfg["model"]["server_packages_sha256"]:
+                raise ValueError("server dependencies differ from resumed batch; start a new batch")
+            previous_identity = dict(prior_cfg["model"].get("model_identity", {}))
+            current_identity = dict(cfg["model"]["model_identity"])
+            for identity in (previous_identity, current_identity):
+                identity.pop("requested_revision", None)
+            if previous_identity and previous_identity != current_identity:
+                raise ValueError("checkpoint identity differs from resumed batch; start a new batch")
+            history = archive_resume(batch, prior_launch, retry)
+            history["retained_run_ids"] = [retained[c]["run_id"] for c in combinations if c in retained]
+            resume_committed = True
+            launch.setdefault("resume_history", []).append(history)
+            launch["outcomes"] = [retained[c] for c in combinations if c in retained]
+            launch["completed_run_count"] = len(retained)
+            launch["check_batch"] = str(args.check.resolve())
+            for key in ("error", "cleanup_error", "finished_at"):
+                launch.pop(key, None)
+        launch["harness_python"] = {"executable": sys.executable, "version": sys.version}
+        launch["harness_source_hashes"] = harness_hashes()
+        (batch / "server-packages.txt").write_text(freeze)
         cfg["model"].update(base_url=base_url, api_model=alias, server_package=server["package"],
                              model_identity=launch["model_identity"])
         cfg["guard"] = args.guard
@@ -360,6 +512,9 @@ def main(argv=None):
             launch["status"] = "running"
             _save(batch / "launch.json", launch)
             for index, (task, condition, treatment) in enumerate(combinations, 1):
+                if (task, condition, treatment) in retained:
+                    print(f"[{index}/{len(combinations)}] {task} {condition} {treatment}: retained", flush=True)
+                    continue
                 print(f"[{index}/{len(combinations)}] {task} {condition} {treatment}", flush=True)
                 if process.poll() is not None:
                     raise RuntimeError("model server exited during experiment; inspect server.log")
@@ -400,10 +555,18 @@ def main(argv=None):
         finally:
             signal.signal(signal.SIGTERM, old_term)
             launch["finished_at"] = time.time()
-            _save(batch / "launch.json", launch)
-            data, markdown = summarize(batch / "runs")
-            _save(batch / "runs/summary.json", data)
-            (batch / "runs/summary.md").write_text(markdown)
+            try:
+                if args.resume and not resume_committed:
+                    # Failed preflight must not rewrite the historical batch.
+                    (batch / "attempts").mkdir(exist_ok=True)
+                    _save(batch / "attempts" / f"resume-error-{uuid.uuid4().hex[:8]}.json", launch)
+                else:
+                    _save(batch / "launch.json", launch)
+                    data, markdown = summarize(batch / "runs")
+                    _save(batch / "runs/summary.json", data)
+                    (batch / "runs/summary.md").write_text(markdown)
+            finally:
+                batch_lock.close()
     print(f"{launch['status']}: {batch}")
     if launch.get("error"):
         print(launch["error"], file=sys.stderr)

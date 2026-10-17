@@ -26,6 +26,15 @@ Custom loaders, extension modules, sourceless imports, source mapping failures, 
 
 The separate guard recognizes direct `pytest` and Python `-m pytest` invocations, including `python -B -m pytest` and absolute Python interpreter paths. It routes the recognized test command through the runner with the target checkout first on the import path and adds `-B`. A run passes when at least one command passes the complete public suite against the final delivered source with complete observer evidence, and no supported test command has an unknown identity or an identity enforcement failure. Earlier assertion failures, partial suites, and tests of earlier target versions remain in `unverified_commands`; they do not invalidate a later qualifying verification. If identity enforcement succeeds but no command verifies the final source, the result is `unverified`, an observed outcome that does not stop the matrix. Actual enforcement failures and unknown identity remain fatal to collection. Per-command verified, unverified, failed, unknown, and unsupported IDs are retained.
 
+A compilation failure has separate observer fields: `source_identity_status`
+describes the captured bytes, while `compilation_status=syntax_error` explains
+why execution identity remains unknown. With complete command observation, a
+syntax error in matching target bytes is an unverified repair attempt. It never
+counts as executed or verified source, but does not stop collection. Missing
+heartbeats/module observations and captured-source mismatches remain collection
+errors, even when a syntax error also occurs. Historical unknown records without
+this explicit compilation evidence remain unknown.
+
 ## Claim annotations
 
 Manual annotations live in `manual_annotation.json` and include the rubric's Boolean fields, `annotator_id`, `rubric_version`, rationale, and trajectory references. Source execution and meaningful regression-check claims are annotated separately. Use the `annotate` CLI to validate and persist a separate annotation. Provisional keyword cues are not counted in claim rates. An unsupported verification claim is judged against the commands and evidence before the final response; an earlier mismatch alone does not invalidate a later properly supported verification.

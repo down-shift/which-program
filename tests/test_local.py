@@ -447,6 +447,129 @@ def test_unverified_guard_is_an_observed_outcome():
         {"evaluable": True}, guard=True) is None
 
 
+def test_resume_retains_budget_outcomes_retries_collection_failure_and_archives_history(tmp_path, monkeypatch):
+    from program_identity.agents.base import AgentResult
+
+    path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)
+    check = successful_check(path, cfg, monkeypatch)
+    original_run_one = local.run_one
+    attempts = []
+
+    def fail_second_evaluation(*args, **kwargs):
+        run_path = original_run_one(*args, **kwargs)
+        attempts.append(run_path)
+        if len(attempts) == 2:
+            evaluation = json.loads((run_path / "selected_evaluation.json").read_text())
+            evaluation["evaluable"] = False
+            (run_path / "selected_evaluation.json").write_text(json.dumps(evaluation))
+        return run_path
+
+    with monkeypatch.context() as patch:
+        patch.setattr(local_chat.LocalChatAgent, "run", lambda *a: AgentResult(
+            "", [], {"input_tokens": 0, "output_tokens": 0, "cost": None}, "action_budget_exhausted"))
+        patch.setattr(local, "run_one", fail_second_evaluation)
+        assert local.main(["--config", str(path), "--stage", "matrix", "--check", str(check)]) == 1
+    matrix = next(p for p in Path(cfg["runs_dir"]).iterdir() if p != check)
+    first_bytes = (attempts[0] / "run.json").read_bytes()
+    old_launch = (matrix / "launch.json").read_bytes()
+    orphan = matrix / "runs" / "interrupted-before-run-json"
+    orphan.mkdir()
+    (orphan / "trajectory.json").write_text('{"partial": true}')
+    hashes = local.harness_hashes()
+    monkeypatch.setattr(local, "harness_hashes", lambda: {**hashes, "test-change": "new-harness"})
+
+    # A stale receipt must fail without rewriting the original batch.
+    assert local.main(["--resume", str(matrix), "--check", str(check)]) == 1
+    assert (matrix / "launch.json").read_bytes() == old_launch
+    assert attempts[1].exists()
+    successful_check(path, cfg, monkeypatch)
+    # successful_check returns the first directory; locate the new check instead.
+    refreshed = next(p for p in Path(cfg["runs_dir"]).iterdir()
+                     if p not in (check, matrix))
+    source = "import re\ndef normalize_code(code):\n    return re.sub(r'\\s+', '-', code.strip()).upper()\n"
+    fake_chat(monkeypatch, [
+        {"action": "write_file", "path": "checkout/package/rules.py", "content": source},
+        {"action": "run", "argv": ["python", "-m", "pytest", "-q", "public_tests"]},
+        {"action": "final", "text": "Changed and tested."},
+    ] * 8)
+    assert local.main(["--resume", str(matrix), "--check", str(refreshed)]) == 0
+    launch = json.loads((matrix / "launch.json").read_text())
+    assert launch["status"] == "completed" and launch["completed_run_count"] == 9
+    assert (attempts[0] / "run.json").read_bytes() == first_bytes
+    assert launch["outcomes"][0]["termination"] == "action_budget_exhausted"
+    history = launch["resume_history"][-1]
+    archive = matrix / history["archive"]
+    assert (archive / "launch.json").read_bytes() == old_launch
+    assert (archive / attempts[1].name / "run.json").exists()
+    assert (archive / orphan.name / "trajectory.json").read_text() == '{"partial": true}'
+    assert not attempts[1].exists()
+    assert json.loads((matrix / "runs/summary.json").read_text())["run_count"] == 9
+    # Repeated resume is a no-op, without another model launch or model call.
+    launch_count = len(stopped)
+    assert local.main(["--resume", str(matrix)]) == 0
+    assert len(stopped) == launch_count
+    cfg["model"]["top_k"] = 30
+    path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(SystemExit) as exc:
+        local.main(["--resume", str(matrix), "--config", str(path), "--dry-run"])
+    assert exc.value.code == 2
+    with monkeypatch.context() as patch:
+        patch.setattr(local, "task_hashes", lambda task: {"changed-task": "new"})
+        with pytest.raises(SystemExit) as exc:
+            local.main(["--resume", str(matrix), "--dry-run"])
+        assert exc.value.code == 2
+
+
+def test_sequence_reuses_completed_matrix_and_resumes_failed_mode(tmp_path, monkeypatch):
+    from program_identity import sequence
+
+    cfg = config()
+    cfg["runs_dir"] = str(tmp_path / "batches")
+    cfg_path = tmp_path / "expanded.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    complete, partial = tmp_path / "complete", tmp_path / "partial"
+
+    def matches(root, current, stage, mode):
+        if stage == "check":
+            return []
+        return [(complete if mode == "treatment" else partial, {}, mode == "treatment")]
+
+    calls = []
+    def launch(arguments):
+        calls.append(arguments)
+        return tmp_path / "new-check"
+    monkeypatch.setattr(sequence, "matching_batches", matches)
+    monkeypatch.setattr(sequence, "launch", launch)
+    assert sequence.main(["--config", str(cfg_path), "--seeds", "18", "--dry-run"]) == 0
+    assert not calls and not Path(cfg["runs_dir"]).exists()
+    assert sequence.main(["--config", str(cfg_path), "--seeds", "18"]) == 0
+    assert len(calls) == 2  # New clean check, followed only by the incomplete guard batch.
+    assert "check" in calls[0]
+    assert calls[1][calls[1].index("--resume") + 1] == partial
+    assert "--guard" in calls[1]
+
+
+def test_sequence_finished_seeds_need_no_check_or_launch(tmp_path, monkeypatch):
+    from program_identity import sequence
+
+    cfg = config()
+    cfg["runs_dir"] = str(tmp_path / "batches")
+    config_path = tmp_path / "expanded.yaml"
+    config_path.write_text(yaml.safe_dump(cfg))
+
+    def matches(root, current, stage, mode):
+        assert stage == "matrix"
+        return [(tmp_path / mode, {}, True)]
+
+    def unexpected_launch(arguments):
+        raise AssertionError("Completed seeds must not launch another check or model")
+
+    monkeypatch.setattr(sequence, "matching_batches", matches)
+    monkeypatch.setattr(sequence, "launch", unexpected_launch)
+    assert sequence.main(["--config", str(config_path), "--seeds", "18", "19", "20"]) == 0
+    assert not Path(cfg["runs_dir"]).exists()
+
+
 def test_incomplete_clean_check_writes_failed_readiness(tmp_path, monkeypatch):
     from program_identity.agents.base import AgentResult
     path, cfg, stopped = mock_server_environment(tmp_path, monkeypatch)

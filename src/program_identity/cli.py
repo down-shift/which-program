@@ -200,6 +200,12 @@ def _guard_outcome(commands, modules, final_hashes):
         rows = modules.get(command.get("command_id"), [])
         expected_modules = set(command.get("module_observation", {}))
         observed_modules = {r.get("module") for r in rows}
+        # Failed compilation leaves execution identity unknown, but the loader
+        # can still establish which source bytes it captured. Never use this
+        # weaker evidence to mark a command verified.
+        captured_statuses = [r.get("source_identity_status", "unknown")
+                             if r.get("compilation_status") == "syntax_error" else
+                             r.get("identity_status", "unknown") for r in rows]
         match = (command.get("guard_status") == "enforced" and command.get("observer_status") == "ok" and
                  command.get("exit_code") == 0 and command.get("test_scope_status") == "validated_public_suite" and rows and
                  expected_modules <= observed_modules and
@@ -209,10 +215,11 @@ def _guard_outcome(commands, modules, final_hashes):
         if match:
             verified.append(command["command_id"])
         elif (not rows or expected_modules - observed_modules or command.get("observer_status") != "ok" or
-              any(r.get("identity_status") == "unknown" for r in rows)):
+              any(v.get("status") != "observed" for v in command.get("module_observation", {}).values()) or
+              "unknown" in captured_statuses):
             unknown_commands.append(command["command_id"])
         elif (command.get("guard_status") != "enforced" or
-              any(r.get("identity_status") not in ("exact_source_match", "equivalent_copy") for r in rows)):
+              any(status not in ("exact_source_match", "equivalent_copy") for status in captured_statuses)):
             failed_commands.append(command["command_id"])
         else:
             # Assertion failures and tests of earlier source versions are normal
